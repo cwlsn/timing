@@ -1,0 +1,7 @@
+// Identifiers and signing. Override any in Local.xcconfig, which git ignores:
+//   DEVELOPMENT_TEAM = XXXXXXXXXX
+//   BUNDLE_PREFIX = com.example
+//   WIDGET_ID = widget
+BUNDLE_PREFIX = com.cwlsn
+WIDGET_ID = widget
+#include? "Local.xcconfig"

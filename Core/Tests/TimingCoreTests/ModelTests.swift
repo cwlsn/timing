@@ -1,0 +1,240 @@
+import Foundation
+import Synchronization
+import Testing
+@testable import TimingCore
+
+private struct Boom: Error {}
+
+private final class FakeClient: TimerClient {
+    struct State {
+        var rings: [UUID: RingInfo] = [:]
+        var log: [String] = []
+        var fails: Set<String> = []
+        var denied = false
+    }
+    let state = Mutex(State())
+
+    private func act(_ name: String, _ body: (inout State) -> Void) throws {
+        try state.withLock {
+            if $0.fails.contains(name) { throw Boom() }
+            $0.log.append(name)
+            body(&$0)
+        }
+    }
+    func fail(_ names: String...) { state.withLock { $0.fails = Set(names) } }
+    func set(_ id: UUID, _ info: RingInfo?) { state.withLock { $0.rings[id] = info } }
+    var log: [String] { state.withLock { $0.log } }
+    func clearLog() { state.withLock { $0.log = [] } }
+
+    func authorize() async throws -> Bool { !isDenied() }
+    func isDenied() -> Bool { state.withLock { $0.denied } }
+    func rings() throws -> [UUID: RingInfo] { state.withLock { $0.rings } }
+    func schedule(_ r: RingRequest) async throws { try act("schedule") { $0.rings[r.id] = RingInfo(.countdown) } }
+    func pause(_ id: UUID) throws { try act("pause") { $0.rings[id] = RingInfo(.paused) } }
+    func resume(_ id: UUID) throws { try act("resume") { $0.rings[id] = RingInfo(.countdown) } }
+    func stop(_ id: UUID) throws { try act("stop") { $0.rings[id] = nil } }
+    func cancel(_ id: UUID) throws { try act("cancel") { $0.rings[id] = nil } }
+}
+
+@MainActor
+struct ModelTests {
+    private let client = FakeClient()
+    private let url = URL.temporaryDirectory.appending(path: "\(UUID().uuidString)/timers.json")
+    private let clock = Clock()
+    private final class Clock { var now = Date(timeIntervalSinceReferenceDate: 1_000_000) }
+    private let pasta = TimerDefinition(label: "Pasta", seconds: 540)
+
+    private func make() -> TimerModel {
+        TimerModel(client: client, file: TimerFile(url: url), now: { [clock] in clock.now })
+    }
+
+    private func ringing(_ model: TimerModel) async throws -> TimerRun {
+        let run = try await model.start(pasta)
+        client.set(run.ringID, RingInfo(.alerting))
+        try await model.reconcile()
+        return try #require(model.runs.first)
+    }
+
+    @Test func startSavesOnlyWhenAsked() async throws {
+        let model = make()
+        try await model.start(pasta)
+        #expect(model.timers.isEmpty && model.runs.count == 1)
+        try await model.start(pasta, saving: true)
+        #expect(model.timers == [pasta])
+        #expect(make().runs.count == 2)
+    }
+
+    @Test func failedStartChangesNothing() async throws {
+        let model = make()
+        client.fail("schedule")
+        await #expect(throws: Boom.self) { try await model.start(pasta, saving: true) }
+        #expect(model.timers.isEmpty && model.runs.isEmpty)
+        client.state.withLock { $0.denied = true; $0.fails = [] }
+        await #expect(throws: TimerModelError.permissionDenied) { try await model.start(pasta) }
+        #expect(model.permissionDenied)
+    }
+
+    @Test func failedWriteCancelsTheCountdown() async throws {
+        let model = make()
+        // A file where the folder should be.
+        try Data().write(to: url.deletingLastPathComponent())
+        await #expect(throws: (any Error).self) { try await model.start(pasta) }
+        #expect(try client.rings().isEmpty && model.runs.isEmpty)
+    }
+
+    @Test func pauseKeepsTimeAndResumeContinues() async throws {
+        let model = make()
+        let run = try await model.start(pasta)
+        clock.now += 100
+        try await model.pause(run.id)
+        #expect(model.runs[0].phase == .paused(remaining: 440))
+        clock.now += 1000
+        try await model.resume(run.id)
+        #expect(model.runs[0].phase == .running(endsAt: clock.now + 440))
+    }
+
+    @Test func ringButtonsScheduleBeforeStopping() async throws {
+        let model = make()
+        let run = try await ringing(model)
+        client.clearLog()
+        try await model.addTime(run)
+        #expect(client.log == ["schedule", "stop"])
+        #expect(model.runs[0].remaining(at: clock.now) == 300 && model.runs[0].generation == 1)
+        // A second tap on the same ring.
+        try await model.addTime(run)
+        #expect(client.log == ["schedule", "stop"])
+        // A late Stop for it.
+        try await model.stop(run)
+        #expect(model.runs.count == 1)
+    }
+
+    @Test func repeatRunsTheWholeLengthForManyRounds() async throws {
+        let model = make()
+        var run = try await ringing(model)
+        for round in 1...5 {
+            try await model.repeat(run)
+            run = model.runs[0]
+            #expect(run.generation == round && run.remaining(at: clock.now) == 540)
+            #expect(try client.rings().count == 1)
+            client.set(run.ringID, RingInfo(.alerting))
+        }
+    }
+
+    @Test func failedRepeatLeavesItRinging() async throws {
+        let model = make()
+        let run = try await ringing(model)
+        client.fail("schedule")
+        await #expect(throws: Boom.self) { try await model.repeat(run) }
+        #expect(try client.rings()[run.ringID]?.state == .alerting && model.runs == [run])
+        client.fail("stop")
+        await #expect(throws: Boom.self) { try await model.repeat(run) }
+        #expect(try client.rings().count == 1 && model.runs == [run])
+    }
+
+    @Test func addTimeWhileRunningOrPaused() async throws {
+        let model = make()
+        _ = try await model.start(pasta)
+        clock.now += 40
+        try await model.addTime(model.runs[0])
+        #expect(model.runs[0].remaining(at: clock.now) == 800)
+        try await model.pause(model.runs[0].id)
+        try await model.addTime(model.runs[0])
+        #expect(model.runs[0].phase == .paused(remaining: 1100))
+        #expect(try client.rings()[model.runs[0].ringID]?.state == .paused)
+    }
+
+    @Test func buttonsWorkFromTheirCopyWhenTheFileIsUnreadable() async throws {
+        let run = try await ringing(make())
+        let saved = try Data(contentsOf: url)
+        try Data("locked".utf8).write(to: url)
+        let model = make()
+        #expect(model.storageFailed)
+        try await model.repeat(run)
+        #expect(try client.rings()[RunSlot.id(for: run.id, generation: 1)]?.state == .countdown)
+        #expect(try Data(contentsOf: url) == Data("locked".utf8))
+        // Readable again, in a new process, with an old generation on file.
+        try saved.write(to: url)
+        let later = make()
+        try await later.reconcile()
+        #expect(later.runs.count == 1 && later.runs[0].generation == 1)
+        #expect(later.runs[0].phase == .running(endsAt: clock.now + 540))
+    }
+
+    @Test func unreadableFileCancelsNothing() async throws {
+        _ = try await make().start(pasta)
+        try Data("bad".utf8).write(to: url)
+        await #expect(throws: TimerModelError.storageUnavailable) { try await make().reconcile() }
+        #expect(try client.rings().count == 1)
+    }
+
+    @Test func reconcileFollowsTheSystem() async throws {
+        let model = make()
+        let run = try await model.start(pasta)
+        client.set(run.ringID, RingInfo(.paused, remaining: 200))
+        client.set(UUID(), RingInfo(.countdown))
+        try await model.reconcile()
+        #expect(model.runs[0].phase == .paused(remaining: 200))
+        #expect(try client.rings().count == 1)
+        client.set(run.ringID, RingInfo(.countdown, endsAt: clock.now + 150))
+        try await model.reconcile()
+        #expect(model.runs[0].phase == .running(endsAt: clock.now + 150))
+        client.set(run.ringID, RingInfo(.countdown, endsAt: clock.now + 150.3))
+        try await model.reconcile()
+        #expect(model.runs[0].phase == .running(endsAt: clock.now + 150))
+        client.set(run.ringID, nil)
+        try await model.reconcile()
+        #expect(model.runs.isEmpty)
+    }
+
+    @Test func reconcileFinishesAnInterruptedRepeat() async throws {
+        let model = make()
+        let run = try await ringing(model)
+        let next = RunSlot.id(for: run.id, generation: 1)
+        client.set(next, RingInfo(.countdown, endsAt: clock.now + 540))
+        try await model.reconcile()
+        #expect(try Array(client.rings().keys) == [next])
+        #expect(model.runs[0].generation == 1)
+    }
+
+    @Test func editingOrDeletingNeverTouchesARun() async throws {
+        let model = make()
+        try await model.start(pasta, saving: true)
+        var edited = pasta
+        edited.seconds = 60
+        edited.label = "  "
+        try await model.save(edited)
+        #expect(model.timers[0].label == "Timer" && model.runs[0].timer == pasta)
+        try await model.delete(pasta.id)
+        #expect(model.timers.isEmpty && model.runs.count == 1)
+    }
+
+    @Test func orderIsManualAndRunsAreByUrgency() async throws {
+        let model = make()
+        let timers = [300, 100, 200].map { TimerDefinition(label: "\($0)", seconds: $0) }
+        for timer in timers { try await model.start(timer, saving: true) }
+        try await model.reorder([timers[2].id, timers[0].id])
+        #expect(model.timers.map(\.label) == ["200", "300", "100"])
+        #expect(model.runs.map(\.timer.label) == ["100", "200", "300"])
+        try await model.pause(model.runs[0].id)
+        client.set(model.runs[1].ringID, RingInfo(.alerting))
+        try await model.reconcile()
+        #expect(model.runs.map(\.timer.label) == ["300", "200", "100"])
+    }
+
+    @Test func startSavedNeverDuplicates() async throws {
+        let model = make()
+        try await model.save(pasta)
+        async let first: Void = model.startSaved(pasta.id)
+        async let second: Void = model.startSaved(pasta.id)
+        _ = try await (first, second)
+        #expect(model.runs.count == 1)
+        await #expect(throws: TimerModelError.unknownTimer) { try await model.startSaved(UUID()) }
+    }
+
+    @Test func stopEndsIt() async throws {
+        let model = make()
+        let run = try await ringing(model)
+        try await model.stop(run)
+        #expect(try client.rings().isEmpty && model.runs.isEmpty && make().runs.isEmpty)
+    }
+}
