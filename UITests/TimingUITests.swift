@@ -45,7 +45,7 @@ final class TimingUITests: XCTestCase {
     }
 
     func testQuickStartSavesOnlyLabelled() {
-        launch()
+        launch("-empty")
         waitFor(app.staticTexts["No timers yet"])
         capture("empty")
         type("9m pasta")
@@ -67,18 +67,22 @@ final class TimingUITests: XCTestCase {
         XCTAssertEqual(app.staticTexts["header"].label, "No timers running")
     }
 
-    func testThreeAtOnceAndNoDuplicates() {
+    func testThreeAtOnceAndTilesAlwaysStartAnother() {
         launch("-seed")
         for label in ["Rice", "Eggs", "Pasta"] {
             waitFor(tile(label))
             tile(label).tap()
             waitFor(app.buttons["Stop \(label)"])
         }
-        tile("Pasta").tap()
-        tile("Pasta").tap()
-        XCTAssertEqual(app.buttons.matching(identifier: "Stop Pasta").count, 1)
+        // Two share a row and the third fills its own.
+        let cards = ["Eggs", "Pasta", "Rice"].map { app.descendants(matching: .any).matching(identifier: "run-\($0)").firstMatch.frame }
+        XCTAssertEqual(cards[0].minY, cards[1].minY, accuracy: 1)
+        XCTAssertEqual(cards[0].width, cards[1].width, accuracy: 1)
+        XCTAssertEqual(cards[0].height, cards[1].height, accuracy: 1)
+        XCTAssertGreaterThan(cards[2].minY, cards[0].maxY)
+        XCTAssertGreaterThan(cards[2].width, cards[0].width * 2)
         capture("three")
-        menu(tile("Pasta"), "Start another")
+        tile("Pasta").tap()
         expectation(for: NSPredicate(format: "count == 2"), evaluatedWith: app.buttons.matching(NSPredicate(format: "label == 'Stop Pasta'")))
         waitForExpectations(timeout: 5)
     }
@@ -101,7 +105,7 @@ final class TimingUITests: XCTestCase {
     }
 
     func testRingAddRepeatStop() {
-        launch()
+        launch("-empty")
         quickStart("3s eggs")
         waitFor(app.buttons["Repeat Eggs"], 8)
         XCTAssertEqual(app.staticTexts["header"].label, "Eggs is ringing")
@@ -124,11 +128,11 @@ final class TimingUITests: XCTestCase {
         app.textFields["Label"].tap()
         app.textFields["Label"].typeText("Rice\n")
         capture("editor-new")
-        app.buttons["Add"].tap()
+        app.buttons["Start"].tap()
+        // It starts without another tap.
+        waitFor(app.buttons["Stop Rice"])
         waitFor(tile("Rice"))
         XCTAssertTrue(tile("Rice").label.contains("12m"), tile("Rice").label)
-        tile("Rice").tap()
-        waitFor(app.buttons["Stop Rice"])
         menu(tile("Rice"), "Edit")
         waitFor(app.pickerWheels.firstMatch)
         app.pickerWheels.element(boundBy: 1).adjust(toPickerWheelValue: "2 min")
@@ -143,16 +147,37 @@ final class TimingUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Stop Rice"].exists)
     }
 
-    func testReorder() {
+    func testStartersAndMostUsedFirst() {
+        launch()
+        for label in ["5 minutes", "10 minutes", "15 minutes"] { waitFor(tile(label)) }
+        XCTAssertLessThan(tile("5 minutes").frame.minX, tile("15 minutes").frame.minX)
+        capture("starters")
+        tile("15 minutes").tap()
+        waitFor(app.buttons["Stop 15 minutes"])
+        // Nothing moves until the app is opened again.
+        XCTAssertLessThan(tile("5 minutes").frame.minX, tile("15 minutes").frame.minX)
+        XCUIDevice.shared.press(.home)
+        sleep(2)
+        app.activate()
+        waitFor(tile("15 minutes"))
+        expectation(for: NSPredicate { [app] _, _ in
+            MainActor.assumeIsolated { app.buttons["tile-15 minutes"].frame.minX < app.buttons["tile-5 minutes"].frame.minX }
+        }, evaluatedWith: app)
+        waitForExpectations(timeout: 5)
+        capture("most-used")
+    }
+
+    func testChooseIcon() {
         launch("-seed")
-        menu(tile("Rice"), "Reorder")
-        let handles = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Reorder'"))
-        waitFor(handles.firstMatch)
-        capture("reorder")
-        handles.element(boundBy: 0).press(forDuration: 0.6, thenDragTo: handles.element(boundBy: 2))
+        menu(tile("Tea"), "Edit")
+        let chosen = app.buttons["icon-☕️"]
+        waitFor(chosen)
+        XCTAssertTrue(app.buttons["icon-🍵"].isSelected)
+        chosen.tap()
+        XCTAssertTrue(chosen.isSelected)
+        capture("icon")
         app.buttons["Done"].firstMatch.tap()
-        waitFor(tile("Eggs"))
-        XCTAssertTrue(tile("Eggs").frame.minY < tile("Rice").frame.minY || tile("Eggs").frame.minX < tile("Rice").frame.minX)
+        waitFor(tile("Tea"))
     }
 
     func testDenied() {

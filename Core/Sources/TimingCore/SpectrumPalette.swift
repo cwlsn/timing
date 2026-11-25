@@ -1,7 +1,7 @@
 import Foundation
 
-/// Cool when there is long to go, warming to ember as a timer nears zero. Dark enough for white body text.
-public struct HeatPalette: Hashable, Sendable {
+/// Bright blue when there is long to go, through violet to magenta as a timer nears zero. Dark enough for white body text.
+public struct SpectrumPalette: Hashable, Sendable {
     public struct RGB: Hashable, Sendable {
         public let red, green, blue: Double
 
@@ -23,10 +23,10 @@ public struct HeatPalette: Hashable, Sendable {
     public let deep, bright: RGB
 
     private static let keys: [(left: Double, deep: RGB, bright: RGB)] = [
-        (0, .init(0.60, 0.09, 0.07), .init(0.80, 0.21, 0.07)),
-        (0.25, .init(0.62, 0.22, 0.05), .init(0.72, 0.34, 0.03)),
-        (0.55, .init(0.46, 0.30, 0.22), .init(0.60, 0.38, 0.12)),
-        (1, .init(0.22, 0.31, 0.45), .init(0.30, 0.42, 0.56)),
+        (0, .init(0.66, 0.05, 0.55), .init(0.85, 0.08, 0.62)),
+        (0.25, .init(0.50, 0.15, 0.80), .init(0.65, 0.20, 0.90)),
+        (0.55, .init(0.30, 0.22, 0.86), .init(0.42, 0.30, 0.95)),
+        (1, .init(0.10, 0.30, 0.88), .init(0.12, 0.42, 0.95)),
     ]
 
     public init(fractionLeft: Double) {

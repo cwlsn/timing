@@ -19,7 +19,7 @@ struct TimerEntity: AppEntity {
 
 /// Reads the app group copy, because widgets and Siri ask from outside the app.
 struct TimerQuery: EntityStringQuery {
-    private func all() -> [TimerEntity] { ((try? TimerFile.shared?.load())?.timers ?? []).map(TimerEntity.init) }
+    private func all() -> [TimerEntity] { ((try? TimerFile.shared?.load())?.byUse ?? []).map(TimerEntity.init) }
 
     func entities(for identifiers: [UUID]) async throws -> [TimerEntity] { all().filter { identifiers.contains($0.id) } }
     func entities(matching string: String) async throws -> [TimerEntity] {

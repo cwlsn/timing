@@ -5,6 +5,7 @@ import TimingCore
 struct TimerEditorView: View {
     let model: TimerModel
     let isNew: Bool
+    let onStart: () -> Void
     let onError: (String) -> Void
     @State private var draft: TimerDefinition
     @State private var original: TimerDefinition
@@ -14,9 +15,10 @@ struct TimerEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
 
-    init(model: TimerModel, timer: TimerDefinition, isNew: Bool, onError: @escaping (String) -> Void) {
+    init(model: TimerModel, timer: TimerDefinition, isNew: Bool, onStart: @escaping () -> Void, onError: @escaping (String) -> Void) {
         self.model = model
         self.isNew = isNew
+        self.onStart = onStart
         self.onError = onError
         var draft = timer
         // Shown as a placeholder so there is nothing to clear before typing.
@@ -31,6 +33,8 @@ struct TimerEditorView: View {
                 VStack(spacing: 0) {
                     wheels
                     VStack(spacing: 26) {
+                        IconPicker(timer: $draft)
+                        Divider()
                         TonePicker(tone: $draft.tone)
                         Divider()
                         ringButton
@@ -78,7 +82,7 @@ struct TimerEditorView: View {
                 .accessibilityLabel("Label")
         }
         ToolbarItem(placement: .confirmationAction) {
-            Button(isNew ? "Add" : "Done") { isNew ? add() : dismiss() }
+            Button(isNew ? "Start" : "Done") { isNew ? start() : dismiss() }
                 .buttonStyle(.glassProminent)
                 .tint(.accentFill)
                 .disabled(draft.seconds < 1)
@@ -96,8 +100,8 @@ struct TimerEditorView: View {
         .padding(.bottom, 28)
         .frame(maxWidth: .infinity)
         .background {
-            // Longer timers are cooler.
-            HeatGradient(fractionLeft: min(1, Double(draft.seconds) / 3600))
+            // Longer timers are bluer.
+            SpectrumGradient(fractionLeft: min(1, Double(draft.seconds) / 3600))
                 .opacity(0.30)
                 .mask(LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom))
                 .padding(.top, -160)
@@ -134,12 +138,14 @@ struct TimerEditorView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func add() {
+    /// A new timer is saved and starts right away.
+    private func start() {
         isSaving = true
         Task {
             do {
-                try await model.save(draft)
+                try await model.start(draft, saving: true)
                 Services.newTimers.remember(draft)
+                onStart()
                 dismiss()
             } catch {
                 errorMessage = ErrorText.message(for: error)
@@ -181,37 +187,46 @@ struct TimerEditorView: View {
     }
 }
 
-struct ReorderView: View {
-    let model: TimerModel
-    let onError: (String) -> Void
-    @Environment(\.dismiss) private var dismiss
+/// Follows the label until one is chosen. Tapping the chosen one goes back to following.
+private struct IconPicker: View {
+    @Binding var timer: TimerDefinition
+    @ScaledMetric(relativeTo: .title) private var size = 30
 
     var body: some View {
-        NavigationStack {
-            List {
-                ForEach(model.timers) { timer in
-                    HStack {
-                        Text(timer.displayLabel)
-                        Spacer()
-                        Text(DurationText.short(timer.seconds)).foregroundStyle(Color.quiet).monospacedDigit()
-                    }
-                }
-                .onMove { source, target in
-                    var ids = model.timers.map(\.id)
-                    ids.move(fromOffsets: source, toOffset: target)
-                    Task {
-                        do { try await model.reorder(ids) } catch { onError(ErrorText.message(for: error)) }
-                    }
-                }
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("Icon").font(.subheadline)
+                Spacer()
+                Text(timer.icon == nil ? "From the label" : "Chosen").font(.footnote).foregroundStyle(Color.quiet)
             }
-            .environment(\.editMode, .constant(.active))
-            .navigationTitle("Reorder")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }.buttonStyle(.glassProminent).tint(.accentFill)
-                }
+            ScrollView(.horizontal) {
+                HStack(spacing: 8) { ForEach(TimerIcon.choices, id: \.self) { choice($0) } }
+                    .scrollTargetLayout()
             }
+            .scrollIndicators(.hidden)
+            .scrollClipDisabled()
+            // Follows the label as it is typed, so the icon it picks is always in view.
+            .scrollPosition(id: Binding(get: { timer.displayIcon }, set: { _ in }), anchor: .center)
+            .animation(.smooth, value: timer.displayIcon)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .sensoryFeedback(.selection, trigger: timer.icon)
+    }
+
+    private func choice(_ icon: String) -> some View {
+        let selected = timer.displayIcon == icon
+        return Button { timer.icon = timer.icon == icon ? nil : icon } label: {
+            Text(icon)
+                .font(.system(size: min(size, 44)))
+                .frame(width: 60, height: 60)
+                .background(selected ? Color.accentFill.opacity(0.16) : Color.chip, in: .rect(cornerRadius: 14, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .strokeBorder(selected ? Color.accentFill.opacity(0.6) : Color.hairline, lineWidth: 1)
+                }
+        }
+        .buttonStyle(SpringyButtonStyle())
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityIdentifier("icon-\(icon)")
     }
 }

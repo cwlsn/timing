@@ -2,56 +2,63 @@ import SwiftUI
 import TimingCore
 
 /// A countdown readable from across the kitchen. It grows its buttons when it rings.
-struct RunRow: View {
+struct RunCard: View {
     let run: TimerRun
+    /// Whether it has a whole row, or shares one.
+    let isFull: Bool
     let model: TimerModel
     let perform: (@escaping () async throws -> Void) -> Void
     @Environment(\.dynamicTypeSize) private var typeSize
     @ScaledMetric(relativeTo: .largeTitle) private var timeSize = 48
 
     var body: some View {
+        let beside = isFull && !typeSize.isAccessibilitySize
+        let layout = beside ? AnyLayout(HStackLayout(spacing: 10)) : AnyLayout(VStackLayout(alignment: .leading, spacing: 14))
         VStack(alignment: .leading, spacing: 16) {
-            let layout = typeSize.isAccessibilitySize
-                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
-                : AnyLayout(HStackLayout(spacing: 10))
             layout {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(run.timer.displayLabel).font(.headline).lineLimit(typeSize.isAccessibilitySize ? nil : 1)
-                    Ticking(isActive: run.isLive && !run.isRinging) { now in
-                        let text = DurationText.countdown(run.remaining(at: now))
-                        Text(text)
-                            .font(.system(size: min(timeSize, 84), weight: .medium).monospacedDigit())
-                            .tracking(-1)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.5)
-                            .contentTransition(.numericText(countsDown: true))
-                            .animation(.snappy, value: text)
-                            .opacity(run.isPaused ? 0.7 : 1)
-                            .accessibilityIdentifier("countdown-\(run.timer.displayLabel)")
-                    }
-                    Text(status).font(.footnote)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                details.frame(maxWidth: .infinity, alignment: .leading)
                 if !run.isRinging {
                     HStack(spacing: 10) {
-                        circle(run.isPaused ? "play.fill" : "pause.fill", run.isPaused ? "Resume" : "Pause") {
+                        control(run.isPaused ? "play.fill" : "pause.fill", run.isPaused ? "Resume" : "Pause", fills: !beside) {
                             if run.isPaused { try await model.resume(run.id) } else { try await model.pause(run.id) }
                         }
-                        circle("xmark", "Stop") { try await model.stop(run) }
+                        control("xmark", "Stop", fills: !beside) { try await model.stop(run) }
                     }
                 }
             }
             if run.isRinging { ringButtons }
         }
         .foregroundStyle(.white)
-        .padding(.horizontal, 20)
-        .padding(.vertical, 18)
+        .padding(16)
+        .frame(maxHeight: .infinity, alignment: .top)
         .background { RunGlow(run: run) }
-        .overlay(alignment: .bottom) { Rectangle().fill(.white.opacity(0.18)).frame(height: 1) }
+        .clipShape(.rect(cornerRadius: 20, style: .continuous))
         .contentShape(.rect)
         .sensoryFeedback(.impact(flexibility: .soft), trigger: run.isPaused)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("run-\(run.timer.displayLabel)")
+    }
+
+    private var details: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("\(run.timer.displayIcon) \(run.timer.displayLabel)")
+                .font(.headline)
+                .lineLimit(typeSize.isAccessibilitySize ? nil : 1)
+                .accessibilityLabel(run.timer.displayLabel)
+            Ticking(isActive: run.isLive && !run.isRinging) { now in
+                let text = DurationText.countdown(run.remaining(at: now))
+                Text(text)
+                    .font(.system(size: min(timeSize, 84), weight: .medium).monospacedDigit())
+                    .tracking(-1)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
+                    .contentTransition(.numericText(countsDown: true))
+                    .animation(.snappy, value: text)
+                    .opacity(run.isPaused ? 0.8 : 1)
+                    .accessibilityIdentifier("countdown-\(run.timer.displayLabel)")
+            }
+            Text(status).font(.footnote).lineLimit(1).minimumScaleFactor(0.7)
+        }
     }
 
     private var status: String {
@@ -71,14 +78,16 @@ struct RunRow: View {
         }
     }
 
-    private func circle(_ symbol: String, _ name: String, _ work: @escaping () async throws -> Void) -> some View {
+    /// A circle beside the time, or stretched across a half-width card.
+    private func control(_ symbol: String, _ name: String, fills: Bool, _ work: @escaping () async throws -> Void) -> some View {
         Button { perform(work) } label: {
             Image(systemName: symbol)
                 .font(.system(size: 19, weight: .semibold))
                 .contentTransition(.symbolEffect(.replace))
-                .frame(width: 52, height: 52)
-                .background(.black.opacity(0.22), in: .circle)
-                .contentShape(.circle)
+                .frame(maxWidth: fills ? .infinity : 52)
+                .frame(width: fills ? nil : 52, height: fills ? 48 : 52)
+                .background(.black.opacity(0.22), in: .capsule)
+                .contentShape(.capsule)
         }
         .buttonStyle(SpringyButtonStyle())
         .accessibilityLabel("\(name) \(run.timer.displayLabel)")
@@ -100,7 +109,7 @@ struct RunRow: View {
     }
 }
 
-/// Heat filling the row. It drains as time passes and glows slowly while ringing.
+/// Color filling the card. It drains as time passes and glows slowly while ringing.
 private struct RunGlow: View {
     let run: TimerRun
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -110,20 +119,20 @@ private struct RunGlow: View {
             if run.isRinging {
                 TimelineView(.animation(minimumInterval: 1 / 20, paused: reduceMotion)) { context in
                     let wave = reduceMotion ? 0 : (sin(context.date.timeIntervalSinceReferenceDate * 3) + 1) / 2
-                    HeatGradient(fractionLeft: wave * 0.12)
+                    SpectrumGradient(fractionLeft: wave * 0.12)
                 }
             } else {
                 Ticking(isActive: run.isLive) { now in
                     let left = run.fractionLeft(at: now)
                     GeometryReader { proxy in
-                        HeatGradient(fractionLeft: left)
+                        SpectrumGradient(fractionLeft: left)
                             .overlay(alignment: .trailing) {
                                 Rectangle().fill(.black.opacity(0.16)).frame(width: proxy.size.width * (1 - left))
                             }
                     }
                     .animation(.linear(duration: 0.5), value: left)
                 }
-                .saturation(run.isPaused ? 0.35 : 1)
+                .saturation(run.isPaused ? 0.5 : 1)
             }
         }
         .accessibilityHidden(true)

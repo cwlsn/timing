@@ -52,10 +52,18 @@ struct EntryTests {
         #expect(DurationText.rough(3900) == "1 hr 5 min")
     }
 
-    @Test func heatKeepsWhiteTextReadable() {
+    @Test func iconsFollowWords() {
+        let icon = { TimerDefinition(label: $0, seconds: 1).displayIcon }
+        #expect(icon("Soft eggs") == "🥚" && icon("Pancakes") == "🥞" && icon("Sourdough") == "🍞")
+        // Parts of words are not words.
+        #expect(icon("Steam") == TimerIcon.fallback && icon("Japan trip") == TimerIcon.fallback)
+        #expect(Set(TimerIcon.choices).count == TimerIcon.choices.count)
+    }
+
+    @Test func spectrumKeepsWhiteTextReadable() {
         for step in 0...100 {
-            let heat = HeatPalette(fractionLeft: Double(step) / 100)
-            #expect(heat.deep.contrastWithWhite >= 4.5 && heat.bright.contrastWithWhite >= 4.5, "\(step)")
+            let spectrum = SpectrumPalette(fractionLeft: Double(step) / 100)
+            #expect(spectrum.deep.contrastWithWhite >= 4.5 && spectrum.bright.contrastWithWhite >= 4.5, "\(step)")
         }
     }
 

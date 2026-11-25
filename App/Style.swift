@@ -4,11 +4,12 @@ import TimingCore
 extension Color {
     /// Readable as small text in both appearances.
     static let accentText = Color(uiColor: UIColor {
-        $0.userInterfaceStyle == .dark ? UIColor(red: 1, green: 0.6, blue: 0.32, alpha: 1) : UIColor(red: 0.70, green: 0.22, blue: 0.03, alpha: 1)
+        $0.userInterfaceStyle == .dark ? UIColor(red: 0.68, green: 0.64, blue: 1, alpha: 1) : UIColor(red: 0.30, green: 0.24, blue: 0.85, alpha: 1)
     })
     static let canvas = Color(uiColor: UIColor {
         $0.userInterfaceStyle == .dark ? UIColor(white: 0.04, alpha: 1) : UIColor(white: 0.99, alpha: 1)
     })
+    static let magenta = Color(red: 0.85, green: 0.08, blue: 0.62)
     /// Neutral fill for chips and tiles.
     static let chip = Color.primary.opacity(0.06)
     static let hairline = Color.primary.opacity(0.10)

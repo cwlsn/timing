@@ -9,10 +9,13 @@ struct RingMetadata: AlarmMetadata {
     /// The run as the buttons need it.
     var snapshot: String
     var label: String
+    /// Missing from countdowns started by earlier versions.
+    var icon: String?
 
     init(run: TimerRun) throws {
         snapshot = try RunSnapshot.encode(run)
         label = run.timer.displayLabel
+        icon = run.timer.displayIcon
     }
 }
 

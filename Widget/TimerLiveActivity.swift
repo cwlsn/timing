@@ -20,36 +20,41 @@ struct TimerLiveActivity: Widget {
         ActivityConfiguration(for: AlarmAttributes<RingMetadata>.self) { context in
             VStack(spacing: 12) {
                 HStack(spacing: 12) {
-                    Text(context.attributes.metadata?.label ?? "Timer").font(.headline).lineLimit(1)
+                    Text([context.attributes.metadata?.icon, context.attributes.metadata?.label ?? "Timer"].compactMap(\.self).joined(separator: " ")).font(.headline).lineLimit(1)
                     Spacer()
                     Remaining(state: context.state).font(.title.weight(.semibold))
-                    Buttons(context: context)
+                    if let snapshot = context.attributes.metadata?.snapshot {
+                        Buttons(snapshot: snapshot, isPaused: context.state.mode.isPaused)
+                    }
                 }
                 Progress(state: context.state)
             }
             .foregroundStyle(.white)
             .padding(16)
             .background(LinearGradient(
-                colors: [Color(white: 0.05), Color(red: 0.16, green: 0.07, blue: 0.04), Color(red: 0.36, green: 0.13, blue: 0.04)],
+                colors: [Color(white: 0.05), Color(red: 0.10, green: 0.06, blue: 0.20), Color(red: 0.20, green: 0.10, blue: 0.42)],
                 startPoint: .topLeading, endPoint: .bottomTrailing))
         } dynamicIsland: { context in
-            DynamicIsland {
+            // iOS chooses which timer's activity fills the island, so each one shows the timer closest to ringing.
+            let shown = IslandTimer(context: context)
+            return DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    Text(context.attributes.metadata?.label ?? "Timer").font(.headline).lineLimit(1)
+                    Text("\(shown.icon) \(shown.label)").font(.headline).lineLimit(1)
                 }
-                DynamicIslandExpandedRegion(.trailing) { Remaining(state: context.state).font(.title2.weight(.semibold)) }
+                DynamicIslandExpandedRegion(.trailing) { shown.remaining.font(.title2.weight(.semibold)) }
                 DynamicIslandExpandedRegion(.bottom) {
                     VStack(spacing: 10) {
-                        Progress(state: context.state)
-                        Buttons(context: context)
+                        shown.progress
+                        if let snapshot = shown.snapshot { Buttons(snapshot: snapshot, isPaused: shown.isPaused) }
                     }
                 }
             } compactLeading: {
-                Image("CatTimer").foregroundStyle(Color.accentBright)
+                Text(shown.icon).accessibilityLabel(shown.label)
             } compactTrailing: {
-                Remaining(state: context.state).frame(maxWidth: 52).foregroundStyle(Color.accentBright)
+                shown.remaining.frame(maxWidth: 56).foregroundStyle(Color.accentBright)
             } minimal: {
-                Image("CatTimer").foregroundStyle(Color.accentBright)
+                Text(context.attributes.metadata?.icon ?? TimerIcon.fallback)
+                    .accessibilityLabel(context.attributes.metadata?.label ?? "Timer")
             }
             .keylineTint(.accentBright)
         }
@@ -98,18 +103,17 @@ private struct Progress: View {
 }
 
 private struct Buttons: View {
-    let context: ActivityViewContext<AlarmAttributes<RingMetadata>>
+    let snapshot: String
+    let isPaused: Bool
 
     var body: some View {
-        if let snapshot = context.attributes.metadata?.snapshot {
-            HStack(spacing: 8) {
-                if case .paused = context.state.mode {
-                    button("play.fill", "Resume", ResumeTimerIntent(snapshot: snapshot))
-                } else {
-                    button("pause.fill", "Pause", PauseTimerIntent(snapshot: snapshot))
-                }
-                button("xmark", "Stop", StopTimerIntent(snapshot: snapshot))
+        HStack(spacing: 8) {
+            if isPaused {
+                button("play.fill", "Resume", ResumeTimerIntent(snapshot: snapshot))
+            } else {
+                button("pause.fill", "Pause", PauseTimerIntent(snapshot: snapshot))
             }
+            button("xmark", "Stop", StopTimerIntent(snapshot: snapshot))
         }
     }
 
@@ -121,5 +125,64 @@ private struct Buttons: View {
         .buttonStyle(.plain)
         .foregroundStyle(.white)
         .accessibilityLabel(name)
+    }
+}
+
+extension AlarmPresentationState.Mode {
+    var isPaused: Bool { if case .paused = self { true } else { false } }
+}
+
+/// The running timer closest to ringing, from the copy the app shares with its widgets.
+/// Falls back to the activity's own timer when there is none, or when this one is ringing.
+private struct IslandTimer {
+    let label: String
+    let icon: String
+    let snapshot: String?
+    let isPaused: Bool
+    private let end: Date?
+    private let total: TimeInterval?
+    private let state: AlarmPresentationState
+
+    init(context: ActivityViewContext<AlarmAttributes<RingMetadata>>) {
+        state = context.state
+        let isRinging = if case .alert = context.state.mode { true } else { false }
+        let soonest = isRinging ? nil : (try? TimerFile.shared?.load())?.soonest(after: .now)
+        if let soonest, case .running(let endsAt) = soonest.phase {
+            label = soonest.timer.displayLabel
+            icon = soonest.timer.displayIcon
+            snapshot = try? RunSnapshot.encode(soonest)
+            isPaused = false
+            end = endsAt
+            total = soonest.total
+        } else {
+            label = context.attributes.metadata?.label ?? "Timer"
+            icon = context.attributes.metadata?.icon ?? TimerIcon.fallback
+            snapshot = context.attributes.metadata?.snapshot
+            isPaused = context.state.mode.isPaused
+            end = nil
+            total = nil
+        }
+    }
+
+    @ViewBuilder var remaining: some View {
+        if let end {
+            Text(timerInterval: Date.now...max(.now, end), countsDown: true)
+                .monospacedDigit()
+                .multilineTextAlignment(.trailing)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+        } else {
+            Remaining(state: state)
+        }
+    }
+
+    @ViewBuilder var progress: some View {
+        if let end, let total {
+            let start = end.addingTimeInterval(-total)
+            ProgressView(timerInterval: start...max(start, end), countsDown: false) { EmptyView() } currentValueLabel: { EmptyView() }
+                .tint(LinearGradient(colors: [.accentFill, .accentBright], startPoint: .leading, endPoint: .trailing))
+        } else {
+            Progress(state: state)
+        }
     }
 }

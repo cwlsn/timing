@@ -23,4 +23,12 @@ public enum DurationText {
         guard minutes >= 60 else { return "\(minutes) min" }
         return minutes % 60 == 0 ? "\(minutes / 60) hr" : "\(minutes / 60) hr \(minutes % 60) min"
     }
+
+    /// "5 minutes", "1 hour 30 minutes".
+    public static func spoken(_ seconds: Int) -> String {
+        [(seconds / 3600, "hour"), (seconds / 60 % 60, "minute"), (seconds % 60, "second")]
+            .filter { $0.0 > 0 }
+            .map { "\($0.0) \($0.1)\($0.0 == 1 ? "" : "s")" }
+            .joined(separator: " ")
+    }
 }

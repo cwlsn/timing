@@ -44,7 +44,13 @@ struct ModelTests {
     private final class Clock { var now = Date(timeIntervalSinceReferenceDate: 1_000_000) }
     private let pasta = TimerDefinition(label: "Pasta", seconds: 540)
 
+    /// Starts with no timers, unlike a first launch.
     private func make() -> TimerModel {
+        if !FileManager.default.fileExists(atPath: url.deletingLastPathComponent().path) { try? TimerFile(url: url).save(TimerContents()) }
+        return first()
+    }
+
+    private func first() -> TimerModel {
         TimerModel(client: client, file: TimerFile(url: url), now: { [clock] in clock.now })
     }
 
@@ -60,7 +66,7 @@ struct ModelTests {
         try await model.start(pasta)
         #expect(model.timers.isEmpty && model.runs.count == 1)
         try await model.start(pasta, saving: true)
-        #expect(model.timers == [pasta])
+        #expect(model.timers.map(\.id) == [pasta.id] && model.timers[0].useCount == 1)
         #expect(make().runs.count == 2)
     }
 
@@ -75,7 +81,7 @@ struct ModelTests {
     }
 
     @Test func failedWriteCancelsTheCountdown() async throws {
-        let model = make()
+        let model = first()
         // A file where the folder should be.
         try Data().write(to: url.deletingLastPathComponent())
         await #expect(throws: (any Error).self) { try await model.start(pasta) }
@@ -208,12 +214,26 @@ struct ModelTests {
         #expect(model.timers.isEmpty && model.runs.count == 1)
     }
 
-    @Test func orderIsManualAndRunsAreByUrgency() async throws {
+    @Test func mostUsedComeFirst() async throws {
         let model = make()
-        let timers = [300, 100, 200].map { TimerDefinition(label: "\($0)", seconds: $0) }
-        for timer in timers { try await model.start(timer, saving: true) }
-        try await model.reorder([timers[2].id, timers[0].id])
-        #expect(model.timers.map(\.label) == ["200", "300", "100"])
+        let timers = ["A", "B", "C"].map { TimerDefinition(label: $0, seconds: 60) }
+        for timer in timers { try await model.save(timer) }
+        for label in ["C", "C", "B"] { try await model.start(timers.first { $0.label == label }!) }
+        #expect(model.timersByUse.map(\.label) == ["C", "B", "A"])
+        #expect(model.timers.map(\.label) == ["A", "B", "C"])
+        // A one-time run, a failed start and an edit count for nothing.
+        try await model.start(TimerDefinition(seconds: 5))
+        client.fail("schedule")
+        await #expect(throws: Boom.self) { try await model.start(timers[0]) }
+        var edited = timers[2]
+        edited.label = "D"
+        try await model.save(edited)
+        #expect(make().timersByUse.map(\.useCount) == [2, 1, 0] && model.timersByUse[0].label == "D")
+    }
+
+    @Test func runsAreByUrgency() async throws {
+        let model = make()
+        for seconds in [300, 100, 200] { try await model.start(TimerDefinition(label: "\(seconds)", seconds: seconds)) }
         #expect(model.runs.map(\.timer.label) == ["100", "200", "300"])
         try await model.pause(model.runs[0].id)
         client.set(model.runs[1].ringID, RingInfo(.alerting))
@@ -221,14 +241,47 @@ struct ModelTests {
         #expect(model.runs.map(\.timer.label) == ["300", "200", "100"])
     }
 
-    @Test func startSavedNeverDuplicates() async throws {
+    @Test func firstLaunchHasStartersAndDeletingThemIsFinal() async throws {
+        let model = first()
+        #expect(model.timers.map(\.seconds) == [300, 600, 900])
+        for timer in model.timers { try await model.delete(timer.id) }
+        #expect(first().timers.isEmpty)
+    }
+
+    @Test func oldFileLoadsAndGainsStarters() throws {
+        let old = #"{"version":1,"timers":[{"id":"6B0E5A0C-6D5B-4C0B-9A55-0F4C3B7B1E11","label":"Tea","seconds":180,"ringButton":"addTime","addMinutes":5}],"runs":[]}"#
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(old.utf8).write(to: url)
+        let model = first()
+        #expect(!model.storageFailed && model.timers.map(\.label) == ["Tea", "5 minutes", "10 minutes", "15 minutes"])
+        #expect(model.timers.map(\.displayIcon) == ["🍵", "☕️", "🍳", "🔥"])
+    }
+
+    @Test func lengthNamesFollowTheLength() async throws {
+        let model = first()
+        var five = model.timers[0]
+        five.seconds = 420
+        try await model.save(five)
+        #expect(model.timers[0].label == "7 minutes")
+    }
+
+    @Test func startSavedAlwaysStartsAnother() async throws {
         let model = make()
         try await model.save(pasta)
         async let first: Void = model.startSaved(pasta.id)
         async let second: Void = model.startSaved(pasta.id)
         _ = try await (first, second)
-        #expect(model.runs.count == 1)
+        #expect(model.runs.count == 2 && model.timers[0].useCount == 2)
         await #expect(throws: TimerModelError.unknownTimer) { try await model.startSaved(UUID()) }
+    }
+
+    @Test func soonestIsClosestToRinging() async throws {
+        let model = make()
+        for seconds in [300, 100, 200] { try await model.start(TimerDefinition(label: "\(seconds)", seconds: seconds)) }
+        try await model.pause(model.runs[0].id)
+        let contents = TimerContents(timers: [], runs: model.runs)
+        #expect(contents.soonest(after: clock.now)?.timer.label == "200")
+        #expect(contents.soonest(after: clock.now + 350) == nil)
     }
 
     @Test func stopEndsIt() async throws {

@@ -52,7 +52,7 @@ struct TimersWidgetView: View {
     @Environment(\.widgetFamily) private var family
 
     var body: some View {
-        let timers = Array(entry.contents.timers.prefix(family == .systemSmall ? 2 : 4))
+        let timers = Array(entry.contents.byUse.prefix(family == .systemSmall ? 2 : 4))
         Group {
             if timers.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
@@ -76,9 +76,12 @@ struct TimersWidgetView: View {
 
     private func tile(_ timer: TimerDefinition) -> some View {
         let run = entry.contents.runs.first { $0.timer.id == timer.id }
-        return VStack(alignment: .leading, spacing: 2) {
-            Text(timer.displayLabel).font(.subheadline.weight(.semibold))
-            RunTime(run: run, timer: timer, date: entry.date).font(.headline.monospacedDigit()).widgetAccentable()
+        return HStack(spacing: 8) {
+            Text(timer.displayIcon).font(.title).accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 0) {
+                RunTime(run: run, timer: timer, date: entry.date).font(.headline.monospacedDigit()).widgetAccentable()
+                if !timer.isNamedForLength { Text(timer.displayLabel).font(.caption) }
+            }
         }
         .lineLimit(1)
         .minimumScaleFactor(0.7)
@@ -118,7 +121,7 @@ struct StartTimerProvider: AppIntentTimelineProvider {
     private func entry(_ configuration: ChooseTimerIntent, _ contents: TimerContents, _ date: Date) -> TimersEntry {
         // Read again, because the timer may have been renamed or deleted since it was chosen.
         let chosen = configuration.timer.flatMap { choice in contents.timers.first { $0.id == choice.id } }
-        return TimersEntry(date: date, contents: contents, chosen: (chosen ?? (configuration.timer == nil ? contents.timers.first : nil)).map(TimerEntity.init))
+        return TimersEntry(date: date, contents: contents, chosen: (chosen ?? (configuration.timer == nil ? contents.byUse.first : nil)).map(TimerEntity.init))
     }
     func placeholder(in context: Context) -> TimersEntry { entry(ChooseTimerIntent(), Timers.sample, .now) }
     func snapshot(for configuration: ChooseTimerIntent, in context: Context) async -> TimersEntry {
@@ -154,7 +157,7 @@ struct StartTimerView: View {
                         ZStack {
                             AccessoryWidgetBackground()
                             VStack(spacing: 0) {
-                                Text(timer.displayLabel).font(.caption2)
+                                Text(timer.displayIcon).accessibilityLabel(timer.displayLabel)
                                 RunTime(run: run, timer: timer, date: entry.date).font(.caption.weight(.semibold).monospacedDigit())
                                     .multilineTextAlignment(.center)
                             }

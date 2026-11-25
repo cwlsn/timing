@@ -8,7 +8,7 @@ import WidgetKit
 @MainActor
 enum Services {
     static let client: any TimerClient = makeClient()
-    static let model = TimerModel(client: client, file: TimerFile(url: storeURL), publish: publish)
+    static let model = TimerModel(client: client, file: makeFile(), publish: publish)
 
     /// UI tests always start fresh and save nothing.
     static let preferences: UserDefaults? = isUITesting ? nil : .standard
@@ -40,6 +40,15 @@ enum Services {
     static let isUITesting = false
     static let forcesDark = false
     #endif
+
+    private static func makeFile() -> TimerFile {
+        let file = TimerFile(url: storeURL)
+        #if DEBUG
+        // Only a first launch has the starter timers.
+        if isSeeded || (isUITesting && ProcessInfo.processInfo.arguments.contains("-empty")) { try? file.save(TimerContents()) }
+        #endif
+        return file
+    }
 
     private static func makeClient() -> any TimerClient {
         #if DEBUG

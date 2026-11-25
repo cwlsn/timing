@@ -5,10 +5,10 @@ import TimingCore
 struct TimersView: View {
     let model: TimerModel
     @State private var editing: TimerDefinition?
-    @State private var reorders = false
+    /// Order is taken when the app opens, so a tile never moves under a finger.
+    @State private var order: [UUID] = []
     @State private var errorMessage: String?
     @State private var startCount = 0
-    @State private var scrollTarget: UUID?
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var typeSize
     @Namespace private var zoom
@@ -31,14 +31,16 @@ struct TimersView: View {
         .animation(.smooth(duration: 0.35), value: model.runs)
         .sheet(item: $editing) { timer in
             let isNew = !model.isSaved(timer)
-            TimerEditorView(model: model, timer: timer, isNew: isNew) { errorMessage = $0 }
+            TimerEditorView(model: model, timer: timer, isNew: isNew) { startCount += 1 } onError: { errorMessage = $0 }
                 .navigationTransition(.zoom(sourceID: isNew ? AnyHashable(Self.addSource) : AnyHashable(timer.id), in: zoom))
         }
-        .sheet(isPresented: $reorders) { ReorderView(model: model) { errorMessage = $0 } }
         .alert("Timer not changed", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
             Button("OK") {}
         } message: { Text(errorMessage ?? "") }
         .sensoryFeedback(.success, trigger: startCount)
+        .onChange(of: scenePhase, initial: true) { _, phase in
+            if phase == .active { order = model.timersByUse.map(\.id) }
+        }
         .onChange(of: scenePhase == .active && model.runs.contains(where: \.isLive), initial: true) { _, awake in
             UIApplication.shared.isIdleTimerDisabled = awake
         }
@@ -54,12 +56,7 @@ struct TimersView: View {
                             .padding(20)
                     }
                     if !model.timers.isEmpty || !model.runs.isEmpty { Header(runs: model.runs) }
-                    ForEach(model.runs) { run in
-                        RunRow(run: run, model: model, perform: attempt)
-                            .contextMenu { runMenu(run) }
-                            .id(run.id)
-                            .transition(.opacity)
-                    }
+                    if !model.runs.isEmpty { cards }
                     if !model.timers.isEmpty { grid }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -67,43 +64,61 @@ struct TimersView: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .scrollEdgeEffectStyle(.soft, for: .all)
-            .onChange(of: scrollTarget) { _, target in
-                guard let target else { return }
-                withAnimation(.smooth) { scroll.scrollTo(target, anchor: .center) }
-                scrollTarget = nil
-            }
         }
     }
 
+    private var cards: some View {
+        let isWide = model.runs.map { $0.isRinging || typeSize.isAccessibilitySize }
+        let full = CardRows.full(isWide)
+        return CardLayout {
+            ForEach(Array(model.runs.enumerated()), id: \.element.id) { index, run in
+                RunCard(run: run, isFull: full.contains(index), model: model, perform: attempt)
+                    .contentShape(.contextMenuPreview, .rect(cornerRadius: 20, style: .continuous))
+                    .contextMenu { runMenu(run) }
+                    .wideCard(isWide[index])
+                    .id(run.id)
+                    .transition(.scale(scale: 0.9).combined(with: .opacity))
+            }
+        }
+        .padding(.horizontal, 20)
+    }
+
+    /// Timers added since the app opened go last.
+    private var tiles: [TimerDefinition] {
+        let byUse = model.timersByUse
+        return order.compactMap { id in byUse.first { $0.id == id } } + byUse.filter { !order.contains($0.id) }
+    }
+
     private var grid: some View {
-        let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: typeSize.isAccessibilitySize ? 1 : 2)
+        let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: typeSize.isAccessibilitySize ? 1 : 3)
         return LazyVGrid(columns: columns, spacing: 12) {
-            ForEach(model.timers) { timer in
+            ForEach(tiles) { timer in
                 let run = model.runs.first { $0.timer.id == timer.id }
-                Button { tap(timer, run) } label: { TimerTile(timer: timer, run: run) }
+                Button { tap(timer) } label: { TimerTile(timer: timer, run: run) }
                     .buttonStyle(SpringyButtonStyle(scale: 0.95))
-                    .accessibilityElement(children: .combine)
-                    .accessibilityHint(run == nil ? "Starts this timer" : "Shows this timer")
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(timer.isNamedForLength ? timer.label : "\(timer.displayLabel), \(DurationText.short(timer.seconds))")
+                    .accessibilityValue(run.map { $0.isRinging ? "Ringing" : $0.isPaused ? "Paused" : "Running" } ?? "")
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityHint("Starts this timer")
                     .accessibilityIdentifier("tile-\(timer.label)")
                     .matchedTransitionSource(id: timer.id, in: zoom)
                     .contentShape(.contextMenuPreview, .rect(cornerRadius: 20, style: .continuous))
-                    .contextMenu { tileMenu(timer, isRunning: run != nil) }
+                    .contextMenu { tileMenu(timer) }
             }
         }
         .padding(.horizontal, 20)
         .padding(.top, 20)
     }
 
-    @ViewBuilder private func tileMenu(_ timer: TimerDefinition, isRunning: Bool) -> some View {
-        if isRunning { Button("Start another", systemImage: "plus") { startNow(timer) } }
+    @ViewBuilder private func tileMenu(_ timer: TimerDefinition) -> some View {
         Button("Edit", systemImage: "pencil") { editing = timer }
         Button("Duplicate", systemImage: "plus.square.on.square") {
             attempt {
                 try await model.save(TimerDefinition(label: timer.label, seconds: timer.seconds, tone: timer.tone,
-                                                     ringButton: timer.ringButton, addMinutes: timer.addMinutes))
+                                                     ringButton: timer.ringButton, addMinutes: timer.addMinutes, icon: timer.icon))
             }
         }
-        if model.timers.count > 1 { Button("Reorder", systemImage: "arrow.up.arrow.down") { reorders = true } }
         Button("Delete", systemImage: "trash", role: .destructive) { attempt { try await model.delete(timer.id) } }
     }
 
@@ -129,19 +144,10 @@ struct TimersView: View {
         .padding(.top, 16)
     }
 
-    private func tap(_ timer: TimerDefinition, _ run: TimerRun?) {
-        if let run { scrollTarget = run.id } else {
-            attempt {
-                // Through the same path as widgets, which never makes a duplicate.
-                try await model.startSaved(timer.id)
-                startCount += 1
-            }
-        }
-    }
-
-    private func startNow(_ timer: TimerDefinition) {
+    /// Always a new run, even beside one of the same timer.
+    private func tap(_ timer: TimerDefinition) {
         attempt {
-            try await model.start(timer)
+            try await model.startSaved(timer.id)
             startCount += 1
         }
     }
@@ -206,37 +212,45 @@ private struct Header: View {
         let ringing = runs.filter(\.isRinging)
         if ringing.count > 1 { return "\(ringing.count) timers are ringing" }
         guard let first = runs.first else { return "No timers running" }
-        let label = first.timer.displayLabel
-        if first.isRinging { return "\(label) is ringing" }
-        return first.isPaused ? "\(label) is paused" : "\(label) in \(DurationText.rough(first.remaining(at: now)))"
+        // A name that is only a length reads badly beside another length.
+        let label = first.timer.isNamedForLength ? nil : first.timer.displayLabel
+        if first.isRinging { return label.map { "\($0) is ringing" } ?? "Time's up" }
+        if first.isPaused { return label.map { "\($0) is paused" } ?? "Paused" }
+        return "\(label ?? "Rings") in \(DurationText.rough(first.remaining(at: now)))"
     }
 }
 
 private struct TimerTile: View {
     let timer: TimerDefinition
     let run: TimerRun?
+    @ScaledMetric(relativeTo: .largeTitle) private var iconSize = 46
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(timer.displayLabel).font(.headline).lineLimit(2).multilineTextAlignment(.leading)
-                Spacer(minLength: 4)
-                if let run {
-                    Image(systemName: run.isRinging ? "bell.fill" : run.isPaused ? "pause.fill" : "timer")
-                        .foregroundStyle(Color.accentText)
-                        .accessibilityLabel(run.isRinging ? "Ringing" : run.isPaused ? "Paused" : "Running")
-                }
-            }
-            Spacer(minLength: 0)
+        VStack(spacing: 4) {
+            Text(timer.displayIcon)
+                .font(.system(size: min(iconSize, 72)))
+                .accessibilityHidden(true)
             Text(DurationText.short(timer.seconds))
-                .font(.title2.weight(.medium))
+                .font(.title3.weight(.semibold))
                 .monospacedDigit()
                 .foregroundStyle(run == nil ? Color.primary : Color.accentText)
-                .lineLimit(1)
-                .minimumScaleFactor(0.6)
+            if !timer.isNamedForLength {
+                Text(timer.displayLabel).font(.footnote).foregroundStyle(Color.quiet)
+            }
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, minHeight: 104, alignment: .leading)
+        .lineLimit(1)
+        .minimumScaleFactor(0.6)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, minHeight: 124)
+        .overlay(alignment: .topTrailing) {
+            if let run {
+                Image(systemName: run.isRinging ? "bell.fill" : run.isPaused ? "pause.fill" : "timer")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(Color.accentText)
+                    .padding(10)
+            }
+        }
         .background(run == nil ? Color.chip : Color.accentFill.opacity(0.14), in: .rect(cornerRadius: 20, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
@@ -249,7 +263,7 @@ private struct TimerTile: View {
 private struct EmptyTimers: View {
     var body: some View {
         ZStack {
-            LinearGradient(colors: [.accentFill.opacity(0.24), .orange.opacity(0.16), .yellow.opacity(0.10)],
+            LinearGradient(colors: [.blue.opacity(0.18), .accentFill.opacity(0.22), .magenta.opacity(0.16)],
                            startPoint: .leading, endPoint: .trailing)
                 .mask(LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .center))
                 .ignoresSafeArea()

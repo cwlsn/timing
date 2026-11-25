@@ -1,9 +1,34 @@
 import Foundation
 
 public struct TimerContents: Codable, Equatable, Sendable {
-    public var version = 1
+    /// 2 added the starter timers.
+    public static let currentVersion = 2
+    public var version = Self.currentVersion
     public var timers: [TimerDefinition]
     public var runs: [TimerRun]
+
+    /// Most used first. Equal ones keep the order they were added.
+    public var byUse: [TimerDefinition] {
+        timers.enumerated().sorted { ($1.element.useCount, $0.offset) < ($0.element.useCount, $1.offset) }.map(\.element)
+    }
+
+    /// The running timer closest to ringing, for the Dynamic Island.
+    public func soonest(after now: Date) -> TimerRun? {
+        runs.compactMap { run -> (TimerRun, Date)? in
+            guard case .running(let endsAt) = run.phase, endsAt > now else { return nil }
+            return (run, endsAt)
+        }
+        .min { $0.1 < $1.1 }?.0
+    }
+
+    /// Adds the starters once. Deleting them later is final.
+    func migrated() -> TimerContents {
+        guard version < 2 else { return self }
+        var contents = self
+        contents.timers += TimerDefinition.starters.filter { starter in !timers.contains { $0.id == starter.id } }
+        contents.version = Self.currentVersion
+        return contents
+    }
 
     public init(timers: [TimerDefinition] = [], runs: [TimerRun] = []) {
         self.timers = timers
@@ -21,7 +46,9 @@ public struct TimerFile: Sendable {
         do {
             return try JSONDecoder().decode(TimerContents.self, from: Data(contentsOf: url))
         } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
-            return TimerContents()
+            var empty = TimerContents()
+            empty.version = 0
+            return empty
         }
     }
 

@@ -5,7 +5,7 @@ public enum TimerModelError: Error, Equatable { case permissionDenied, storageUn
 
 @MainActor @Observable
 public final class TimerModel {
-    /// Saved timers, in the order the person arranged them.
+    /// Saved timers, in the order they were added.
     public private(set) var timers: [TimerDefinition] = []
     public private(set) var runs: [TimerRun] = []
     public private(set) var permissionDenied = false
@@ -28,6 +28,8 @@ public final class TimerModel {
         try? loadIfNeeded()
     }
 
+    public var timersByUse: [TimerDefinition] { TimerContents(timers: timers).byUse }
+
     public func isSaved(_ timer: TimerDefinition) -> Bool { timers.contains { $0.id == timer.id } }
 
     // MARK: Saved timers
@@ -38,7 +40,12 @@ public final class TimerModel {
             try self.loadIfNeeded()
             var updated = self.timers
             if let index = updated.firstIndex(where: { $0.id == timer.id }) {
-                updated[index] = timer.normalized
+                var changed = timer.normalized
+                // It may have been started while it was being edited.
+                changed.useCount = updated[index].useCount
+                // A name that only states the length follows it.
+                if updated[index].isNamedForLength, changed.label == updated[index].label { changed.label = DurationText.spoken(changed.seconds) }
+                updated[index] = changed
             } else {
                 updated.append(timer.normalized)
             }
@@ -53,15 +60,6 @@ public final class TimerModel {
         }
     }
 
-    /// Timers missing from `ids` keep their order at the end.
-    public func reorder(_ ids: [UUID]) async throws {
-        try await exclusively {
-            try self.loadIfNeeded()
-            let moved = ids.compactMap { id in self.timers.first { $0.id == id } }
-            try self.commit(timers: moved + self.timers.filter { !ids.contains($0.id) })
-        }
-    }
-
     // MARK: Runs
 
     /// `saving` also keeps the timer. Nothing is saved unless the countdown starts.
@@ -73,14 +71,11 @@ public final class TimerModel {
         }
     }
 
-    /// For widgets, controls and Siri, which know only which timer was chosen. Never makes a duplicate.
+    /// For tiles, widgets, controls and Siri, which know only which timer was chosen. Always a new run.
     public func startSaved(_ id: UUID) async throws {
         try await exclusively {
             try self.loadIfNeeded()
             guard let timer = self.timers.first(where: { $0.id == id }) else { throw TimerModelError.unknownTimer }
-            self.permissionDenied = self.client.isDenied()
-            if !self.permissionDenied { try self.sync() }
-            guard !self.runs.contains(where: { $0.timer.id == id }) else { return }
             _ = try await self.begin(timer, saving: false)
         }
     }
@@ -147,8 +142,10 @@ public final class TimerModel {
         var run = TimerRun(timer: timer, total: seconds, phase: .running(endsAt: now().addingTimeInterval(seconds)))
         try await client.schedule(RingRequest(run: run, seconds: seconds))
         run.phase = .running(endsAt: now().addingTimeInterval(seconds))
+        var updated = saving && !isSaved(timer) ? timers + [timer] : timers
+        if let index = updated.firstIndex(where: { $0.id == timer.id }) { updated[index].useCount += 1 }
         do {
-            try commit(timers: saving && !isSaved(timer) ? timers + [timer] : timers, runs: runs + [run])
+            try commit(timers: updated, runs: runs + [run])
         } catch {
             try? client.cancel(run.ringID)
             throw error
@@ -266,7 +263,7 @@ public final class TimerModel {
     private func loadIfNeeded() throws {
         guard !loaded else { return }
         do {
-            let contents = try file.load()
+            let contents = try file.load().migrated()
             timers = contents.timers
             // A ring button may have moved a run on while the file was unreadable.
             let newer = Dictionary(runs.map { ($0.id, $0) }, uniquingKeysWith: { $1 })
