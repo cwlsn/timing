@@ -15,7 +15,7 @@ An iPhone timer with labels. Save the timers you cook with, start any of them wi
 - **Quick start**: type `9m pasta` to start and save it, `9m` to run once, or `pasta` to start the saved one. A timer made with + is saved and starts too.
 - **Add time or Repeat** beside Stop when a timer rings, chosen per timer. Inside the app both are always there.
 - **Color**: a running timer moves from bright blue through violet to magenta as it nears zero.
-- **Outside the app**: Live Activities with Pause and Stop, the Dynamic Island showing the timer closest to ringing, Home Screen and Lock Screen widgets, a Control Center button, and "Start Pasta in Timing" for Siri.
+- **Outside the app**: Live Activities with Pause and Stop, the Dynamic Island showing the timer closest to ringing, a Home Screen widget of running timers with a New button, a Lock Screen widget that starts a timer you choose, a Control Center button, and "Start Pasta in Timing" for Siri.
 - **Private**: no account, no network code, no analytics. Timers stay on the phone.
 
 ## Build

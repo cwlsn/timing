@@ -82,3 +82,12 @@ struct StartChosenTimerIntent: LiveActivityIntent {
         return .result()
     }
 }
+
+/// Opens the app. In both the app and the widget extension, because iOS runs it in the app to open it.
+struct OpenTimingIntent: AppIntent {
+    static let title: LocalizedStringResource = "Open Timing"
+    static let isDiscoverable = false
+    static let supportedModes: IntentModes = .foreground
+
+    func perform() async throws -> some IntentResult { .result() }
+}

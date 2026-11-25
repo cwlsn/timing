@@ -10,7 +10,7 @@ struct TimingApp: App {
 
     var body: some Scene {
         WindowGroup {
-            TimersView(model: Services.model)
+            root
                 .tint(Color.accentText)
                 .preferredColorScheme(Services.forcesDark ? .dark : nil)
                 .task {
@@ -29,6 +29,16 @@ struct TimingApp: App {
         .onChange(of: scenePhase, initial: true) { _, phase in
             if phase == .active { Task { try? await Services.model.reconcile() } }
         }
+    }
+}
+
+extension TimingApp {
+    @ViewBuilder private var root: some View {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-widgets") { WidgetGallery() } else { TimersView(model: Services.model) }
+        #else
+        TimersView(model: Services.model)
+        #endif
     }
 }
 

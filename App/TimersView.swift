@@ -170,12 +170,6 @@ struct TimersView: View {
     }
 }
 
-extension TimerRun {
-    var isLive: Bool { if case .paused = phase { false } else { true } }
-    var isRinging: Bool { phase == .ringing }
-    var isPaused: Bool { !isLive }
-}
-
 /// Redraws twice a second only while a timer is counting.
 struct Ticking<Content: View>: View {
     let isActive: Bool

@@ -190,6 +190,16 @@ final class TimingUITests: XCTestCase {
         capture("denied")
     }
 
+    func testWidgetGallery() {
+        for (name, extra) in [("light", []), ("dark", ["-dark"])] {
+            app.launchArguments = ["-uiTesting", "-widgets"] + extra
+            app.launch()
+            XCTAssertTrue(app.buttons["New timer"].firstMatch.waitForExistence(timeout: 5))
+            sleep(1)
+            capture("widgets-\(name)")
+        }
+    }
+
     func testScreenshots() {
         for (name, extra) in [("light", []), ("dark", ["-dark"]), ("large", ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"])] {
             app.launchArguments = ["-uiTesting", "-seed", "-running"] + extra

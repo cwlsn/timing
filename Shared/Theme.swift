@@ -18,3 +18,9 @@ struct SpectrumGradient: View {
         LinearGradient(colors: [Color(spectrum.deep), Color(spectrum.bright)], startPoint: .topLeading, endPoint: .bottomTrailing)
     }
 }
+
+extension TimerRun {
+    var isLive: Bool { if case .paused = phase { false } else { true } }
+    var isRinging: Bool { phase == .ringing }
+    var isPaused: Bool { !isLive }
+}

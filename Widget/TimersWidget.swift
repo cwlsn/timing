@@ -11,10 +11,14 @@ struct TimersEntry: TimelineEntry {
 }
 
 private enum Timers {
-    static let sample = TimerContents(timers: [
-        TimerDefinition(label: "Rice", seconds: 720), TimerDefinition(label: "Eggs", seconds: 390),
-        TimerDefinition(label: "Pasta", seconds: 540), TimerDefinition(label: "Tea", seconds: 180),
-    ])
+    /// What the gallery shows: saved timers for the Lock Screen widget, and two running for this one.
+    static let sample: TimerContents = {
+        let timers = [TimerDefinition(label: "Eggs", seconds: 390), TimerDefinition(label: "Rice", seconds: 720)]
+        let runs = [(timers[0], 78.0), (timers[1], 498.0)].map { timer, left in
+            TimerRun(timer: timer, total: TimeInterval(timer.seconds), phase: .running(endsAt: .now + left))
+        }
+        return TimerContents(timers: timers, runs: runs)
+    }()
 
     static func load(preview: Bool) -> TimerContents {
         preview ? sample : (try? TimerFile.shared?.load()) ?? TimerContents()
@@ -40,10 +44,12 @@ struct TimersProvider: TimelineProvider {
 
 struct TimersWidget: Widget {
     var body: some WidgetConfiguration {
-        StaticConfiguration(kind: "Timers", provider: TimersProvider()) { TimersWidgetView(entry: $0) }
-            .configurationDisplayName("Timers")
-            .description("Start your saved timers.")
-            .supportedFamilies([.systemSmall, .systemMedium])
+        StaticConfiguration(kind: "Timers", provider: TimersProvider()) { entry in
+            TimersWidgetView(entry: entry)
+        }
+        .configurationDisplayName("Running Timers")
+        .description("Your running timers, and a button for a new one.")
+        .supportedFamilies([.systemSmall, .systemMedium])
     }
 }
 
@@ -52,46 +58,8 @@ struct TimersWidgetView: View {
     @Environment(\.widgetFamily) private var family
 
     var body: some View {
-        let timers = Array(entry.contents.byUse.prefix(family == .systemSmall ? 2 : 4))
-        Group {
-            if timers.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    Image("CatTimer").font(.title2).foregroundStyle(Color.accentFill).accessibilityHidden(true)
-                    Spacer(minLength: 4)
-                    Text("No timers yet").font(.headline)
-                    Text("Tap to add one").font(.subheadline).foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-            } else {
-                let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: family == .systemSmall ? 1 : 2)
-                LazyVGrid(columns: columns, spacing: 8) {
-                    ForEach(timers) { timer in
-                        Button(intent: StartTimerIntent(timer: TimerEntity(timer))) { tile(timer) }.buttonStyle(.plain)
-                    }
-                }
-            }
-        }
-        .containerBackground(.background, for: .widget)
-    }
-
-    private func tile(_ timer: TimerDefinition) -> some View {
-        let run = entry.contents.runs.first { $0.timer.id == timer.id }
-        return HStack(spacing: 8) {
-            Text(timer.displayIcon).font(.title).accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 0) {
-                RunTime(run: run, timer: timer, date: entry.date).font(.headline.monospacedDigit()).widgetAccentable()
-                if !timer.isNamedForLength { Text(timer.displayLabel).font(.caption) }
-            }
-        }
-        .lineLimit(1)
-        .minimumScaleFactor(0.7)
-        .foregroundStyle(run == nil ? Color.primary : .white)
-        .padding(.horizontal, 12)
-        .frame(maxWidth: .infinity, minHeight: 60, alignment: .leading)
-        .background {
-            let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
-            if run == nil { shape.fill(Color.primary.opacity(0.07)) } else { shape.fill(Color.accentFill) }
-        }
+        ActiveTimersView(contents: entry.contents, date: entry.date, size: family == .systemSmall ? .small : .medium)
+            .containerBackground(.background, for: .widget)
     }
 }
 
