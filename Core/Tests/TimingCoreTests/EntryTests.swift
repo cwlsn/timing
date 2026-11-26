@@ -60,6 +60,17 @@ struct EntryTests {
         #expect(Set(TimerIcon.choices).count == TimerIcon.choices.count)
     }
 
+    /// A preset's label agrees with what it was given, so renaming one lands it somewhere sensible.
+    @Test func presetsMatchTheirWords() {
+        for preset in TimerDefinition.presets {
+            #expect(TimerIcon.suggestion(for: preset.label) == preset.icon, "\(preset.label)")
+            #expect(TimerCategory.suggestion(for: preset.label) == preset.category, "\(preset.label)")
+            #expect(TimerIcon.choices.contains(preset.displayIcon), "\(preset.label)")
+        }
+        for starter in TimerDefinition.starters { #expect(TimerIcon.choices.contains(starter.displayIcon)) }
+        #expect(TimerCategory.suggestion(for: "9m pasta") == .cooking && TimerCategory.suggestion(for: "Japan trip") == nil)
+    }
+
     @Test func spectrumKeepsWhiteTextReadable() {
         for step in 0...100 {
             let spectrum = SpectrumPalette(fractionLeft: Double(step) / 100)

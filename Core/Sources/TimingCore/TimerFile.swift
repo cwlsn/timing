@@ -1,8 +1,8 @@
 import Foundation
 
 public struct TimerContents: Codable, Equatable, Sendable {
-    /// 2 added the starter timers.
-    public static let currentVersion = 2
+    /// 2 added the starter timers, 3 their categories and the presets.
+    public static let currentVersion = 3
     public var version = Self.currentVersion
     public var timers: [TimerDefinition]
     public var runs: [TimerRun]
@@ -21,11 +21,19 @@ public struct TimerContents: Codable, Equatable, Sendable {
         .min { $0.1 < $1.1 }?.0
     }
 
-    /// Adds the starters once. Deleting them later is final.
+    /// Adds starters and presets once. Deleting them later is final.
     func migrated() -> TimerContents {
-        guard version < 2 else { return self }
+        guard version < Self.currentVersion else { return self }
         var contents = self
-        contents.timers += TimerDefinition.starters.filter { starter in !timers.contains { $0.id == starter.id } }
+        if version < 3 {
+            for (index, starter) in TimerDefinition.starters.enumerated() {
+                guard let at = contents.timers.firstIndex(where: { $0.id == starter.id }) else { continue }
+                if contents.timers[at].category == nil { contents.timers[at].category = .quick }
+                if contents.timers[at].icon == TimerDefinition.firstStarterIcons[index] { contents.timers[at].icon = starter.icon }
+            }
+        }
+        let added = (version < 2 ? TimerDefinition.starters : []) + (version < 3 ? TimerDefinition.presets : [])
+        contents.timers += added.filter { preset in !timers.contains { $0.id == preset.id } }
         contents.version = Self.currentVersion
         return contents
     }

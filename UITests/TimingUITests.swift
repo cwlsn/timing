@@ -31,6 +31,30 @@ final class TimingUITests: XCTestCase {
     }
 
     private func tile(_ label: String) -> XCUIElement { app.buttons["tile-\(label)"] }
+    private func category(_ name: String) -> XCUIElement { app.buttons["category-\(name)"] }
+    private func open(_ name: String, line: UInt = #line) {
+        reveal(name, line: line)
+        category(name).tap()
+        waitFor(app.navigationBars[name], line: line)
+    }
+    private func back() {
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        waitFor(app.textFields["Quick start"])
+    }
+    /// Large text can push it below the bar, where the grid has not made it yet.
+    private func reveal(_ name: String, line: UInt = #line) {
+        waitFor(app.textFields["Quick start"], line: line)
+        for _ in 0..<6 where !(category(name).exists && category(name).isHittable) { app.scrollViews.firstMatch.swipeUp() }
+        XCTAssertTrue(category(name).isHittable, "category-\(name) not reachable", line: line)
+    }
+    /// Starting from a category goes back to the main screen.
+    private func start(_ label: String, in name: String, line: UInt = #line) {
+        open(name, line: line)
+        waitFor(tile(label), line: line)
+        tile(label).tap()
+        waitFor(app.buttons["Stop \(label)"], line: line)
+        XCTAssertFalse(app.navigationBars[name].exists, line: line)
+    }
     private func waitFor(_ element: XCUIElement, _ timeout: TimeInterval = 5, line: UInt = #line) {
         XCTAssertTrue(element.waitForExistence(timeout: timeout), "\(element) missing", line: line)
     }
@@ -54,26 +78,24 @@ final class TimingUITests: XCTestCase {
         XCTAssertTrue(preview.label.contains("Starts and saves"), preview.label)
         capture("quick")
         app.buttons["Start timer"].tap()
-        waitFor(tile("Pasta"))
         waitFor(app.buttons["Stop Pasta"])
+        // Filed under what its label suggests.
+        waitFor(category("Cooking"))
         quickStart("20m")
         waitFor(app.buttons["Stop Timer"])
-        XCTAssertFalse(tile("Timer").exists)
+        XCTAssertFalse(category("Other").exists)
         app.buttons["Stop Timer"].tap()
         waitGone(app.buttons["Stop Timer"])
         app.buttons["Stop Pasta"].tap()
         waitGone(app.buttons["Stop Pasta"])
-        XCTAssertTrue(tile("Pasta").exists)
         XCTAssertEqual(app.staticTexts["header"].label, "No timers running")
+        open("Cooking")
+        waitFor(tile("Pasta"))
     }
 
     func testThreeAtOnceAndTilesAlwaysStartAnother() {
         launch("-seed")
-        for label in ["Rice", "Eggs", "Pasta"] {
-            waitFor(tile(label))
-            tile(label).tap()
-            waitFor(app.buttons["Stop \(label)"])
-        }
+        for label in ["Rice", "Eggs", "Pasta"] { start(label, in: "Cooking") }
         // Two share a row and the third fills its own.
         let cards = ["Eggs", "Pasta", "Rice"].map { app.descendants(matching: .any).matching(identifier: "run-\($0)").firstMatch.frame }
         XCTAssertEqual(cards[0].minY, cards[1].minY, accuracy: 1)
@@ -82,6 +104,8 @@ final class TimingUITests: XCTestCase {
         XCTAssertGreaterThan(cards[2].minY, cards[0].maxY)
         XCTAssertGreaterThan(cards[2].width, cards[0].width * 2)
         capture("three")
+        XCTAssertEqual(category("Cooking").value as? String, "3 running")
+        open("Cooking")
         tile("Pasta").tap()
         expectation(for: NSPredicate(format: "count == 2"), evaluatedWith: app.buttons.matching(NSPredicate(format: "label == 'Stop Pasta'")))
         waitForExpectations(timeout: 5)
@@ -89,9 +113,7 @@ final class TimingUITests: XCTestCase {
 
     func testPauseHoldsTime() {
         launch("-seed")
-        waitFor(tile("Tea"))
-        tile("Tea").tap()
-        waitFor(app.buttons["Pause Tea"])
+        start("Tea", in: "Drinks")
         app.buttons["Pause Tea"].tap()
         waitFor(app.buttons["Resume Tea"])
         let time = app.staticTexts["countdown-Tea"]
@@ -126,49 +148,94 @@ final class TimingUITests: XCTestCase {
         waitFor(app.pickerWheels.firstMatch)
         app.pickerWheels.element(boundBy: 1).adjust(toPickerWheelValue: "12 min")
         app.textFields["Label"].tap()
-        app.textFields["Label"].typeText("Rice\n")
+        app.textFields["Label"].typeText("Risotto\n")
+        XCTAssertEqual(app.buttons["category-picker"].value as? String, "Cooking")
         capture("editor-new")
         app.buttons["Start"].tap()
         // It starts without another tap.
-        waitFor(app.buttons["Stop Rice"])
-        waitFor(tile("Rice"))
-        XCTAssertTrue(tile("Rice").label.contains("12m"), tile("Rice").label)
-        menu(tile("Rice"), "Edit")
+        waitFor(app.buttons["Stop Risotto"])
+        open("Cooking")
+        waitFor(tile("Risotto"))
+        XCTAssertTrue(tile("Risotto").label.contains("12m"), tile("Risotto").label)
+        menu(tile("Risotto"), "Edit")
         waitFor(app.pickerWheels.firstMatch)
         app.pickerWheels.element(boundBy: 1).adjust(toPickerWheelValue: "2 min")
         app.segmentedControls.buttons["Repeat"].tap()
         app.buttons["Done"].firstMatch.tap()
-        expectation(for: NSPredicate(format: "label CONTAINS '2m' AND NOT label CONTAINS '12m'"), evaluatedWith: tile("Rice"))
+        expectation(for: NSPredicate(format: "label CONTAINS '2m' AND NOT label CONTAINS '12m'"), evaluatedWith: tile("Risotto"))
         waitForExpectations(timeout: 5)
+        menu(tile("Risotto"), "Delete")
+        waitGone(tile("Risotto"))
+        back()
         // The run keeps the length it started with.
-        XCTAssertTrue(app.staticTexts["countdown-Rice"].label.hasPrefix("11:"), app.staticTexts["countdown-Rice"].label)
-        menu(tile("Rice"), "Delete")
-        waitGone(tile("Rice"))
-        XCTAssertTrue(app.buttons["Stop Rice"].exists)
+        XCTAssertTrue(app.staticTexts["countdown-Risotto"].label.hasPrefix("11:"), app.staticTexts["countdown-Risotto"].label)
+    }
+
+    func testCategories() {
+        launch()
+        let names = ["Quick", "Cooking", "Baking", "Drinks", "Exercise", "Everyday"]
+        for name in names { waitFor(category(name)) }
+        XCTAssertFalse(category("Other").exists)
+        capture("categories")
+        open("Drinks")
+        for label in ["Green tea", "Black tea", "Herbal tea", "French press"] { waitFor(tile(label)) }
+        capture("category")
+        app.buttons["add-Drinks"].tap()
+        waitFor(app.pickerWheels.firstMatch)
+        app.textFields["Label"].tap()
+        app.textFields["Label"].typeText("Japan trip\n")
+        // Made here, so it stays here whatever its label says.
+        XCTAssertEqual(app.buttons["category-picker"].value as? String, "Drinks")
+        app.buttons["Start"].tap()
+        waitFor(app.buttons["Stop Japan trip"])
+        open("Drinks")
+        menu(tile("Japan trip"), "Edit")
+        app.buttons["category-picker"].tap()
+        app.buttons["From the label (Other)"].tap()
+        XCTAssertEqual(app.buttons["category-picker"].value as? String, "Other")
+        app.buttons["Done"].firstMatch.tap()
+        waitGone(tile("Japan trip"))
+        back()
+        start("Japan trip", in: "Other")
+        // Deleting the last one in a category goes back and hides it.
+        open("Other")
+        menu(tile("Japan trip"), "Delete")
+        waitGone(app.navigationBars["Other"])
+        waitGone(category("Other"))
     }
 
     func testStartersAndMostUsedFirst() {
         launch()
+        open("Quick")
         for label in ["5 minutes", "10 minutes", "15 minutes"] { waitFor(tile(label)) }
         XCTAssertLessThan(tile("5 minutes").frame.minX, tile("15 minutes").frame.minX)
         capture("starters")
-        tile("15 minutes").tap()
-        waitFor(app.buttons["Stop 15 minutes"])
+        back()
+        start("15 minutes", in: "Quick")
+        for _ in 0..<2 { start("Black tea", in: "Drinks") }
         // Nothing moves until the app is opened again.
+        XCTAssertLessThan(category("Quick").frame.minX, category("Drinks").frame.minX)
+        open("Quick")
         XCTAssertLessThan(tile("5 minutes").frame.minX, tile("15 minutes").frame.minX)
+        back()
         XCUIDevice.shared.press(.home)
         sleep(2)
         app.activate()
-        waitFor(tile("15 minutes"))
-        expectation(for: NSPredicate { [app] _, _ in
-            MainActor.assumeIsolated { app.buttons["tile-15 minutes"].frame.minX < app.buttons["tile-5 minutes"].frame.minX }
-        }, evaluatedWith: app)
+        waitFor(category("Drinks"))
+        let first = NSPredicate { [app] _, _ in
+            MainActor.assumeIsolated { app.buttons["category-Drinks"].frame.minY < app.buttons["category-Cooking"].frame.minY }
+        }
+        expectation(for: first, evaluatedWith: app)
         waitForExpectations(timeout: 5)
+        XCTAssertEqual(category("Drinks").frame.minX, category("Cooking").frame.minX, accuracy: 1)
         capture("most-used")
+        open("Quick")
+        XCTAssertLessThan(tile("15 minutes").frame.minX, tile("5 minutes").frame.minX)
     }
 
     func testChooseIcon() {
         launch("-seed")
+        open("Drinks")
         menu(tile("Tea"), "Edit")
         let chosen = app.buttons["icon-☕️"]
         waitFor(chosen)
@@ -183,10 +250,10 @@ final class TimingUITests: XCTestCase {
     func testDenied() {
         launch("-denied")
         waitFor(app.staticTexts["Alarms are turned off"])
-        quickStart("9m pasta")
+        quickStart("9m chowder")
         waitFor(app.alerts["Timer not changed"])
         app.alerts.buttons["OK"].tap()
-        XCTAssertFalse(tile("Pasta").exists)
+        XCTAssertFalse(category("Other").exists)
         capture("denied")
     }
 
@@ -205,8 +272,14 @@ final class TimingUITests: XCTestCase {
             app.launchArguments = ["-uiTesting", "-seed", "-running"] + extra
             app.launch()
             waitFor(app.buttons["Resume Sourdough"])
+            reveal("Baking")
+            XCTAssertEqual(category("Baking").value as? String, "1 paused")
             sleep(1)
             capture("main-\(name)")
+            open("Cooking")
+            sleep(1)
+            capture("category-\(name)")
+            back()
             app.buttons["Add timer"].firstMatch.tap()
             waitFor(app.pickerWheels.firstMatch)
             sleep(1)

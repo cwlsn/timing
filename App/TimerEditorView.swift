@@ -35,6 +35,8 @@ struct TimerEditorView: View {
                     VStack(spacing: 26) {
                         IconPicker(timer: $draft)
                         Divider()
+                        CategoryPicker(timer: $draft)
+                        Divider()
                         TonePicker(tone: $draft.tone)
                         Divider()
                         ringButton
@@ -184,6 +186,43 @@ struct TimerEditorView: View {
                 onError(ErrorText.message(for: error))
             }
         }
+    }
+}
+
+/// Follows the label until one is chosen, like the icon.
+private struct CategoryPicker: View {
+    @Binding var timer: TimerDefinition
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    var body: some View {
+        // Laid out like Sound, so the two rows read as one list.
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+            : AnyLayout(HStackLayout(spacing: 12))
+        layout {
+            Text("Category").accessibilityHidden(true)
+            if !dynamicTypeSize.isAccessibilitySize { Spacer() }
+            Menu {
+                Picker("Category", selection: $timer.category) {
+                    let suggested = TimerCategory.suggestion(for: timer.label) ?? .other
+                    Text("From the label (\(suggested.name))").tag(TimerCategory?.none)
+                    ForEach(TimerCategory.allCases) { Text("\($0.icon)  \($0.name)").tag(Optional($0)) }
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
+            } label: {
+                Chip(isSelected: false) {
+                    Text("\(timer.displayCategory.icon)  \(timer.displayCategory.name)").lineLimit(1).minimumScaleFactor(0.7)
+                    Image(systemName: "chevron.up.chevron.down").imageScale(.small).foregroundStyle(Color.quiet)
+                }
+            }
+            .accessibilityLabel("Category")
+            .accessibilityValue(timer.displayCategory.name)
+            .accessibilityIdentifier("category-picker")
+        }
+        .font(.subheadline)
+        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        .sensoryFeedback(.selection, trigger: timer.category)
     }
 }
 

@@ -11,7 +11,8 @@ An iPhone timer with labels. Save the timers you cook with, start any of them wi
 ## What it does
 
 - **Rings through Silent mode and Focus**, using Apple's AlarmKit.
-- **Saved timers**: a large icon, chosen or taken from the label, and each tap starts one, even beside one already running. The most used come first. 5, 10 and 15 minutes are there on first launch.
+- **Categories**: saved timers are grouped into Quick, Cooking, Baking, Drinks, Exercise, Everyday and Other. The main screen shows the categories; tap one to see its timers. A timer joins the category its label suggests (Pasta goes to Cooking) unless one is chosen in the editor. The most used categories come first.
+- **Saved timers**: a large icon, chosen or taken from the label, and each tap starts one, even beside one already running, then goes back to the main screen. The most used come first. First launch brings 5, 10 and 15 minutes under Quick, plus presets in every other category, all of which can be edited or deleted.
 - **Quick start**: type `9m pasta` to start and save it, `9m` to run once, or `pasta` to start the saved one. A timer made with + is saved and starts too.
 - **Add time or Repeat** beside Stop when a timer rings, chosen per timer. Inside the app both are always there.
 - **Color**: a running timer moves from bright blue through violet to magenta as it nears zero.
@@ -69,7 +70,7 @@ Check these by hand on a phone before a release:
 
 ### Decisions worth knowing
 
-- **Tiles are sorted when the app opens,** never while it is in use, so a tile does not move under a finger.
+- **Categories and tiles are sorted when the app opens,** never while it is in use, so a tile does not move under a finger.
 - **Each run is its own alarm and carries a copy of its timer.** Editing or deleting a saved timer never changes one that is running.
 - **Add time and Repeat schedule the next countdown first,** then end the current one, so a failure leaves the timer as it was.
 - **AlarmKit decides the state; the app keeps the time.** An alarm does not say when it ends, so the app stores it and corrects it from the Live Activity.

@@ -241,20 +241,57 @@ struct ModelTests {
         #expect(model.runs.map(\.timer.label) == ["300", "200", "100"])
     }
 
-    @Test func firstLaunchHasStartersAndDeletingThemIsFinal() async throws {
+    @Test func firstLaunchHasStartersAndPresetsAndDeletingThemIsFinal() async throws {
         let model = first()
-        #expect(model.timers.map(\.seconds) == [300, 600, 900])
+        #expect(model.timers.prefix(3).map(\.seconds) == [300, 600, 900])
+        #expect(model.timers.count == 3 + TimerDefinition.presets.count)
+        #expect(Set(model.timers.map(\.id)).count == model.timers.count)
+        #expect(TimerContents(timers: model.timers).categoriesByUse == [.quick, .cooking, .baking, .drinks, .exercise, .everyday])
         for timer in model.timers { try await model.delete(timer.id) }
         #expect(first().timers.isEmpty)
     }
 
-    @Test func oldFileLoadsAndGainsStarters() throws {
+    @Test func oldFileLoadsAndGainsStartersAndPresets() throws {
         let old = #"{"version":1,"timers":[{"id":"6B0E5A0C-6D5B-4C0B-9A55-0F4C3B7B1E11","label":"Tea","seconds":180,"ringButton":"addTime","addMinutes":5}],"runs":[]}"#
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data(old.utf8).write(to: url)
         let model = first()
-        #expect(!model.storageFailed && model.timers.map(\.label) == ["Tea", "5 minutes", "10 minutes", "15 minutes"])
-        #expect(model.timers.map(\.displayIcon) == ["🍵", "☕️", "🍳", "🔥"])
+        #expect(!model.storageFailed && model.timers.prefix(4).map(\.label) == ["Tea", "5 minutes", "10 minutes", "15 minutes"])
+        #expect(model.timers.prefix(4).map(\.displayIcon) == ["🍵", "⏱️", "⏲️", "⌛️"])
+        #expect(model.timers[0].category == nil && model.timers[0].displayCategory == .drinks)
+        #expect(model.timers.count == 4 + TimerDefinition.presets.count)
+    }
+
+    /// Starters from before categories join Quick. A chosen icon is kept, and a deleted one stays deleted.
+    @Test func startersFromVersionTwoJoinQuick() throws {
+        var kept = TimerDefinition.starters[0]
+        kept.category = nil
+        kept.icon = "☕️"
+        var chosen = TimerDefinition.starters[1]
+        chosen.category = nil
+        chosen.icon = "🥚"
+        var contents = TimerContents(timers: [kept, chosen])
+        contents.version = 2
+        try TimerFile(url: url).save(contents)
+        let model = first()
+        #expect(model.timers.prefix(2).map(\.displayIcon) == ["⏱️", "🥚"])
+        #expect(model.timers.prefix(2).map(\.category) == [.quick, .quick])
+        #expect(!model.timers.contains { $0.id == TimerDefinition.starters[2].id })
+        #expect(model.timers.count == 2 + TimerDefinition.presets.count)
+    }
+
+    @Test func categoriesFollowTheLabelUntilChosenAndSortByUse() async throws {
+        let model = make()
+        let tea = TimerDefinition(label: "Tea", seconds: 180)
+        var plank = TimerDefinition(label: "Plank", seconds: 60)
+        let odd = TimerDefinition(label: "Japan trip", seconds: 60)
+        for timer in [tea, plank, odd] { try await model.save(timer) }
+        #expect(model.timers.map(\.displayCategory) == [.drinks, .exercise, .other])
+        try await model.startSaved(plank.id)
+        #expect(TimerContents(timers: model.timers).categoriesByUse == [.exercise, .drinks, .other])
+        plank.category = .everyday
+        try await model.save(plank)
+        #expect(TimerContents(timers: model.timers).categoriesByUse == [.everyday, .drinks, .other])
     }
 
     @Test func lengthNamesFollowTheLength() async throws {

@@ -5,8 +5,11 @@ import TimingCore
 struct TimersView: View {
     let model: TimerModel
     @State private var editing: TimerDefinition?
+    @State private var editSource: AnyHashable = TimersView.addSource
+    @State private var path: [TimerCategory] = []
     /// Order is taken when the app opens, so a tile never moves under a finger.
     @State private var order: [UUID] = []
+    @State private var categoryOrder: [TimerCategory] = []
     @State private var errorMessage: String?
     @State private var startCount = 0
     @Environment(\.scenePhase) private var scenePhase
@@ -19,30 +22,39 @@ struct TimersView: View {
     }
 
     var body: some View {
-        Group {
-            if isEmpty { EmptyTimers() } else { content }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.canvas.ignoresSafeArea())
-        .safeAreaBar(edge: .bottom) {
-            QuickEntryBar(saved: model.timers, addSource: Self.addSource, zoom: zoom, start: start) { editing = Services.newTimers.blank() }
+        NavigationStack(path: $path) {
+            Group {
+                if isEmpty { EmptyTimers() } else { content }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.canvas.ignoresSafeArea())
+            .toolbarVisibility(.hidden, for: .navigationBar)
+            .safeAreaBar(edge: .bottom) {
+                QuickEntryBar(saved: model.timers, addSource: Self.addSource, zoom: zoom, start: start) { add(Services.newTimers.blank()) }
+            }
+            .navigationDestination(for: TimerCategory.self) { categoryScreen($0) }
         }
         .animation(.smooth(duration: 0.35), value: model.timers)
         .animation(.smooth(duration: 0.35), value: model.runs)
         .sheet(item: $editing) { timer in
-            let isNew = !model.isSaved(timer)
-            TimerEditorView(model: model, timer: timer, isNew: isNew) { startCount += 1 } onError: { errorMessage = $0 }
-                .navigationTransition(.zoom(sourceID: isNew ? AnyHashable(Self.addSource) : AnyHashable(timer.id), in: zoom))
+            TimerEditorView(model: model, timer: timer, isNew: !model.isSaved(timer)) { started() } onError: { errorMessage = $0 }
+                .navigationTransition(.zoom(sourceID: editSource, in: zoom))
         }
         .alert("Timer not changed", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
             Button("OK") {}
         } message: { Text(errorMessage ?? "") }
         .sensoryFeedback(.success, trigger: startCount)
         .onChange(of: scenePhase, initial: true) { _, phase in
-            if phase == .active { order = model.timersByUse.map(\.id) }
+            guard phase == .active else { return }
+            order = model.timersByUse.map(\.id)
+            categoryOrder = TimerContents(timers: model.timers).categoriesByUse
         }
         .onChange(of: scenePhase == .active && model.runs.contains(where: \.isLive), initial: true) { _, awake in
             UIApplication.shared.isIdleTimerDisabled = awake
+        }
+        .onChange(of: model.timers) {
+            // A category emptied by deleting its last timer has nothing left to show.
+            if let shown = path.last, tiles(in: shown).isEmpty { path.removeAll() }
         }
     }
 
@@ -57,7 +69,7 @@ struct TimersView: View {
                     }
                     if !model.timers.isEmpty || !model.runs.isEmpty { Header(runs: model.runs) }
                     if !model.runs.isEmpty { cards }
-                    if !model.timers.isEmpty { grid }
+                    if !model.timers.isEmpty { categoryGrid }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.bottom, 16)
@@ -83,40 +95,87 @@ struct TimersView: View {
         .padding(.horizontal, 20)
     }
 
-    /// Timers added since the app opened go last.
-    private var tiles: [TimerDefinition] {
-        let byUse = model.timersByUse
+    /// Categories and timers added since the app opened go last.
+    private var categories: [TimerCategory] {
+        let shown = TimerContents(timers: model.timers).categoriesByUse
+        return categoryOrder.filter(shown.contains) + shown.filter { !categoryOrder.contains($0) }
+    }
+
+    private func tiles(in category: TimerCategory) -> [TimerDefinition] {
+        let byUse = model.timersByUse.filter { $0.displayCategory == category }
         return order.compactMap { id in byUse.first { $0.id == id } } + byUse.filter { !order.contains($0.id) }
     }
 
-    private var grid: some View {
-        let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: typeSize.isAccessibilitySize ? 1 : 3)
+    private var categoryGrid: some View {
+        let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: typeSize.isAccessibilitySize ? 1 : 2)
         return LazyVGrid(columns: columns, spacing: 12) {
-            ForEach(tiles) { timer in
-                let run = model.runs.first { $0.timer.id == timer.id }
-                Button { tap(timer) } label: { TimerTile(timer: timer, run: run) }
+            ForEach(categories) { category in
+                let timers = tiles(in: category)
+                let runs = model.runs.filter { $0.timer.displayCategory == category }
+                let status = CategoryTile.status(timers: timers.count, runs: runs)
+                NavigationLink(value: category) { CategoryTile(category: category, status: status, isActive: !runs.isEmpty) }
                     .buttonStyle(SpringyButtonStyle(scale: 0.95))
                     .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(timer.isNamedForLength ? timer.label : "\(timer.displayLabel), \(DurationText.short(timer.seconds))")
-                    .accessibilityValue(run.map { $0.isRinging ? "Ringing" : $0.isPaused ? "Paused" : "Running" } ?? "")
+                    .accessibilityLabel("\(category.name), \(timers.count) \(timers.count == 1 ? "timer" : "timers")")
+                    .accessibilityValue(runs.isEmpty ? "" : status)
                     .accessibilityAddTraits(.isButton)
-                    .accessibilityHint("Starts this timer")
-                    .accessibilityIdentifier("tile-\(timer.label)")
-                    .matchedTransitionSource(id: timer.id, in: zoom)
-                    .contentShape(.contextMenuPreview, .rect(cornerRadius: 20, style: .continuous))
-                    .contextMenu { tileMenu(timer) }
+                    .accessibilityIdentifier("category-\(category.name)")
+                    .matchedTransitionSource(id: category, in: zoom)
             }
         }
         .padding(.horizontal, 20)
         .padding(.top, 20)
     }
 
+    private func categoryScreen(_ category: TimerCategory) -> some View {
+        let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: typeSize.isAccessibilitySize ? 1 : 3)
+        return ScrollView {
+            LazyVGrid(columns: columns, spacing: 12) {
+                ForEach(tiles(in: category)) { timer in
+                    let run = model.runs.first { $0.timer.id == timer.id }
+                    Button { tap(timer) } label: { TimerTile(timer: timer, run: run) }
+                        .buttonStyle(SpringyButtonStyle(scale: 0.95))
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(timer.isNamedForLength ? timer.label : "\(timer.displayLabel), \(DurationText.short(timer.seconds))")
+                        .accessibilityValue(run.map { $0.isRinging ? "Ringing" : $0.isPaused ? "Paused" : "Running" } ?? "")
+                        .accessibilityAddTraits(.isButton)
+                        .accessibilityHint("Starts this timer")
+                        .accessibilityIdentifier("tile-\(timer.label)")
+                        .matchedTransitionSource(id: timer.id, in: zoom)
+                        .contentShape(.contextMenuPreview, .rect(cornerRadius: 20, style: .continuous))
+                        .contextMenu { tileMenu(timer) }
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
+        }
+        .scrollEdgeEffectStyle(.soft, for: .all)
+        .background(Color.canvas.ignoresSafeArea())
+        .navigationTitle(category.name)
+        .navigationTransition(.zoom(sourceID: category, in: zoom))
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button("New timer", systemImage: "plus") {
+                    var timer = Services.newTimers.blank()
+                    timer.category = category
+                    add(timer, from: category)
+                }
+                .accessibilityIdentifier("add-\(category.name)")
+            }
+            .matchedTransitionSource(id: "add-\(category.rawValue)", in: zoom)
+        }
+    }
+
     @ViewBuilder private func tileMenu(_ timer: TimerDefinition) -> some View {
-        Button("Edit", systemImage: "pencil") { editing = timer }
+        Button("Edit", systemImage: "pencil") {
+            editSource = timer.id
+            editing = timer
+        }
         Button("Duplicate", systemImage: "plus.square.on.square") {
             attempt {
                 try await model.save(TimerDefinition(label: timer.label, seconds: timer.seconds, tone: timer.tone,
-                                                     ringButton: timer.ringButton, addMinutes: timer.addMinutes, icon: timer.icon))
+                                                     ringButton: timer.ringButton, addMinutes: timer.addMinutes, icon: timer.icon,
+                                                     category: timer.category))
             }
         }
         Button("Delete", systemImage: "trash", role: .destructive) { attempt { try await model.delete(timer.id) } }
@@ -148,8 +207,19 @@ struct TimersView: View {
     private func tap(_ timer: TimerDefinition) {
         attempt {
             try await model.startSaved(timer.id)
-            startCount += 1
+            started()
         }
+    }
+
+    /// Back to the main screen, where the new countdown is.
+    private func started() {
+        startCount += 1
+        path.removeAll()
+    }
+
+    private func add(_ timer: TimerDefinition, from category: TimerCategory? = nil) {
+        editSource = category.map { AnyHashable("add-\($0.rawValue)") } ?? AnyHashable(Self.addSource)
+        editing = timer
     }
 
     private func start(_ action: DurationEntry.Action) async -> Bool {
@@ -211,6 +281,50 @@ private struct Header: View {
         if first.isRinging { return label.map { "\($0) is ringing" } ?? "Time's up" }
         if first.isPaused { return label.map { "\($0) is paused" } ?? "Paused" }
         return "\(label ?? "Rings") in \(DurationText.rough(first.remaining(at: now)))"
+    }
+}
+
+private struct CategoryTile: View {
+    let category: TimerCategory
+    let status: String
+    let isActive: Bool
+
+    /// Running wins over paused, since it is what needs watching.
+    static func status(timers: Int, runs: [TimerRun]) -> String {
+        let paused = runs.filter(\.isPaused).count
+        if runs.count > paused { return "\(runs.count - paused) running" }
+        if paused > 0 { return "\(paused) paused" }
+        return "\(timers) \(timers == 1 ? "timer" : "timers")"
+    }
+    @ScaledMetric(relativeTo: .largeTitle) private var iconSize = 34
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(category.icon)
+                .font(.system(size: min(iconSize, 56)))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(category.name)
+                    .font(.headline)
+                    .foregroundStyle(Color.primary)
+                Text(status)
+                    .font(.footnote)
+                    .monospacedDigit()
+                    .foregroundStyle(isActive ? Color.accentText : Color.quiet)
+            }
+            Spacer(minLength: 0)
+        }
+        .lineLimit(1)
+        .minimumScaleFactor(0.7)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, minHeight: 76)
+        .background(!isActive ? Color.chip : Color.accentFill.opacity(0.14), in: .rect(cornerRadius: 20, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(!isActive ? Color.hairline : Color.accentFill.opacity(0.5), lineWidth: 1)
+        }
+        .contentShape(.rect)
     }
 }
 

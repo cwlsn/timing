@@ -19,10 +19,12 @@ public struct TimerDefinition: Codable, Hashable, Identifiable, Sendable {
     public var icon: String?
     /// How many times it has been started.
     public var useCount: Int
+    /// Chosen group, or `nil` to follow the label.
+    public var category: TimerCategory?
 
     public init(id: UUID = UUID(), label: String = TimerDefinition.defaultLabel, seconds: Int, tone: String? = nil,
                 ringButton: RingButton = .addTime, addMinutes: Int = 5,
-                icon: String? = nil, useCount: Int = 0) {
+                icon: String? = nil, useCount: Int = 0, category: TimerCategory? = nil) {
         self.id = id
         self.label = label
         self.seconds = seconds
@@ -31,9 +33,10 @@ public struct TimerDefinition: Codable, Hashable, Identifiable, Sendable {
         self.addMinutes = addMinutes
         self.icon = icon
         self.useCount = useCount
+        self.category = category
     }
 
-    /// Files from before icons and use counts must still load.
+    /// Files from before icons, use counts and categories must still load.
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decode(UUID.self, forKey: .id)
@@ -44,13 +47,18 @@ public struct TimerDefinition: Codable, Hashable, Identifiable, Sendable {
         addMinutes = try values.decode(Int.self, forKey: .addMinutes)
         icon = try values.decodeIfPresent(String.self, forKey: .icon)
         useCount = try values.decodeIfPresent(Int.self, forKey: .useCount) ?? 0
+        // One from a newer version falls back to the label.
+        category = try? values.decodeIfPresent(TimerCategory.self, forKey: .category)
     }
 
-    /// Waiting on first launch. Fixed IDs, so widgets and Siri agree on them before the first save.
-    public static let starters = [(5, "☕️"), (10, "🍳"), (15, "🔥")].enumerated().map { index, starter in
-        TimerDefinition(id: UUID(uuid: (0x71, 0x4D, 0, 0, 0, 0, 0x40, 0, 0x80, 0, 0, 0, 0, 0, 0, UInt8(index + 1))),
-                        label: DurationText.spoken(starter.0 * 60), seconds: starter.0 * 60, icon: starter.1)
+    /// Waiting on first launch, under Quick.
+    public static let starters = [(5, "⏱️"), (10, "⏲️"), (15, "⌛️")].enumerated().map { index, starter in
+        TimerDefinition(id: presetID(group: 0, index: UInt8(index + 1)), label: DurationText.spoken(starter.0 * 60),
+                        seconds: starter.0 * 60, icon: starter.1, category: .quick)
     }
+
+    /// What the starters looked like before categories, so only untouched ones are changed.
+    static let firstStarterIcons = ["☕️", "🍳", "🔥"]
 
     public var displayIcon: String { icon ?? TimerIcon.suggestion(for: label) ?? TimerIcon.fallback }
 
