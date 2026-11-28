@@ -18,6 +18,14 @@ final class TimingUITests: XCTestCase {
         add(shot)
     }
 
+    /// Waits for the countdown to tick, then for its digits to finish changing, so a screenshot never catches them halfway.
+    private func settle(_ label: String) {
+        let time = app.staticTexts["countdown-\(label)"]
+        expectation(for: NSPredicate(format: "label != %@", time.label), evaluatedWith: time)
+        waitForExpectations(timeout: 3)
+        Thread.sleep(forTimeInterval: 0.7)
+    }
+
     private func type(_ text: String) {
         let field = app.textFields["Quick start"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
@@ -131,6 +139,8 @@ final class TimingUITests: XCTestCase {
         quickStart("3s eggs")
         waitFor(app.buttons["Repeat Eggs"], 8)
         XCTAssertEqual(app.staticTexts["header"].label, "Eggs is ringing")
+        // Lets the header's old text finish fading out.
+        Thread.sleep(forTimeInterval: 0.7)
         capture("ringing")
         app.buttons["Repeat Eggs"].tap()
         waitFor(app.buttons["Pause Eggs"])
@@ -274,7 +284,7 @@ final class TimingUITests: XCTestCase {
             waitFor(app.buttons["Resume Sourdough"])
             reveal("Baking")
             XCTAssertEqual(category("Baking").value as? String, "1 paused")
-            sleep(1)
+            settle("Eggs")
             capture("main-\(name)")
             open("Cooking")
             sleep(1)
