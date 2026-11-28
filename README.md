@@ -1,11 +1,22 @@
-# Timing
+<p align="center">
+  <img src="docs/logo.png" width="128" height="128" alt="Timing's icon: a white timer with cat ears on purple">
+</p>
 
-An iPhone timer with labels. Save the timers you cook with, start any of them with one tap, and run several at once.
+<h1 align="center">Timing</h1>
 
-<p>
-<img src="docs/main.png" width="240" alt="Running timer cards above a grid of saved timers">
-<img src="docs/ringing.png" width="240" alt="A ringing timer with Add 5m, Repeat and Stop">
-<img src="docs/main-dark.png" width="240" alt="The main screen in dark mode">
+<p align="center">
+  <strong>An iPhone timer with labels.</strong><br>
+  Save the timers you cook with, start any of them with one tap, and run several at once.
+</p>
+
+<p align="center">
+  <sub>iOS 26.1 or later · Swift 6 · <a href="LICENSE">MIT license</a></sub>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/main.png" width="240" alt="Running timer cards above the categories of saved timers">
+  <img src="docs/screenshots/ringing.png" width="240" alt="A ringing timer with Add 5m, Repeat and Stop">
+  <img src="docs/screenshots/main-light.png" width="240" alt="The main screen in light mode">
 </p>
 
 ## What it does
@@ -18,6 +29,15 @@ An iPhone timer with labels. Save the timers you cook with, start any of them wi
 - **Color**: a running timer moves from bright blue through violet to magenta as it nears zero.
 - **Outside the app**: Live Activities with Pause and Stop, the Dynamic Island showing the timer closest to ringing, a Home Screen widget of running timers with a New button, a Lock Screen widget that starts a timer you choose, a Control Center button, and "Start Pasta in Timing" for Siri.
 - **Private**: no account, no network code, no analytics. Timers stay on the phone.
+
+<table>
+  <tr>
+    <td align="center" valign="top" width="25%"><img src="docs/screenshots/quick-start.png" width="180" alt="Typing 9m pasta into the quick start field"><br><b>Quick start</b><br><sub>Just type <code>9m pasta</code></sub></td>
+    <td align="center" valign="top" width="25%"><img src="docs/screenshots/category.png" width="180" alt="The saved timers in Cooking"><br><b>Categories</b><br><sub>Timers sorted for you</sub></td>
+    <td align="center" valign="top" width="25%"><img src="docs/screenshots/icon.png" width="180" alt="Choosing an icon in the timer editor"><br><b>Icons</b><br><sub>Chosen or from the label</sub></td>
+    <td align="center" valign="top" width="25%"><img src="docs/screenshots/widgets.png" width="180" alt="Home Screen widgets of running timers"><br><b>Widgets</b><br><sub>Running timers at a glance</sub></td>
+  </tr>
+</table>
 
 ## Build
 
@@ -56,6 +76,8 @@ Check these by hand on a phone before a release:
 - Pause, Resume and Stop work from the Live Activity, and the app agrees on the time left.
 - Each widget, the Control Center button and Siri start a timer with the app closed.
 
+After a change to how the app looks, run `Scripts/screenshots.sh` to refresh the logo and screenshots in this README. It runs the UI tests on a fresh simulator with a clean status bar and keeps the screens they capture.
+
 ## How it is laid out
 
 | Folder | Contents |
@@ -65,8 +87,8 @@ Check these by hand on a phone before a release:
 | `Shared` | Built into the app and the widget extension: AlarmKit client, intents, shared colors and symbol |
 | `Widget` | Live Activity, widgets and Control Center button |
 | `UITests` | UI tests, run with `-uiTesting` |
-| `Scripts` | Generate the icon, the symbol and the tones |
-| `docs` | Screenshots, and [what AlarmKit does on a real phone](docs/alarmkit-findings.md) |
+| `Scripts` | Generate the icon, the symbol, the tones and the README images. Each file's first lines show how to run it. |
+| `docs` | README images, and [what AlarmKit does on a real phone](docs/alarmkit-findings.md) |
 
 ### Decisions worth knowing
 
